@@ -85,10 +85,10 @@ jobs:
           # GitHub Actions output doesn't handle large multi-line JSON well
           # We'll just check if file exists for now
           if [ -f "${{ env.RELEASE_TRACKING_FILE }}" ]; then
-            echo "has_tracking=true" >> $GITHUB_OUTPUT
+            echo "has_tracking=true" >> "$GITHUB_OUTPUT"
             echo "📋 Found existing tracking file"
           else
-            echo "has_tracking=false" >> $GITHUB_OUTPUT
+            echo "has_tracking=false" >> "$GITHUB_OUTPUT"
             echo "📋 No existing tracking file"
           fi
 
@@ -124,7 +124,7 @@ jobs:
 
           if [ $DETECTOR_EXIT -ne 0 ]; then
             echo "❌ Detector script failed!"
-            echo "has_new=false" >> $GITHUB_OUTPUT
+            echo "has_new=false" >> "$GITHUB_OUTPUT"
             exit 1
           fi
 
@@ -138,7 +138,7 @@ jobs:
             while IFS='=' read -r key value; do
               # Skip empty lines and comments
               if [ -n "$key" ] && [[ ! "$key" =~ ^# ]]; then
-                echo "$key=$value" >> $GITHUB_OUTPUT
+                echo "$key=$value" >> "$GITHUB_OUTPUT"
 
                 # Show appropriate output based on size
                 if [ ${#value} -gt 200 ]; then
@@ -155,7 +155,7 @@ jobs:
             echo "✅ Outputs set successfully"
           else
             echo "❌ Detector output file not found!"
-            echo "has_new=false" >> $GITHUB_OUTPUT
+            echo "has_new=false" >> "$GITHUB_OUTPUT"
             exit 1
           fi
 
@@ -168,16 +168,16 @@ jobs:
           git add ${{ env.RELEASE_TRACKING_FILE }}
 
           if git commit -m "🤖 Update tracked releases - $(date -u +'%Y-%m-%d %H:%M UTC')"; then
-            echo "commit_made=true" >> $GITHUB_OUTPUT
+            echo "commit_made=true" >> "$GITHUB_OUTPUT"
             if git push origin "HEAD:refs/heads/${GITHUB_REF_NAME}"; then
-              echo "push_success=true" >> $GITHUB_OUTPUT
+              echo "push_success=true" >> "$GITHUB_OUTPUT"
               echo "✅ Tracking file committed and pushed successfully"
             else
-              echo "push_success=false" >> $GITHUB_OUTPUT
+              echo "push_success=false" >> "$GITHUB_OUTPUT"
               echo "⚠️ Push failed - may need manual sync"
             fi
           else
-            echo "commit_made=false" >> $GITHUB_OUTPUT
+            echo "commit_made=false" >> "$GITHUB_OUTPUT"
             echo "ℹ️ No changes to commit"
           fi
 
