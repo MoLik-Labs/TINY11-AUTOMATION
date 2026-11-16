@@ -5,8 +5,19 @@
     Run: Invoke-Pester ./tests/Test-BuildNumberParsing.Tests.ps1
 #>
 
-$modulePath = Join-Path $PSScriptRoot '..\scripts\tiny11_image_metadata.psm1'
-Import-Module $modulePath -Force
+BeforeAll {
+    $modulePath = Join-Path $PSScriptRoot '..\scripts\tiny11_image_metadata.psm1'
+    Import-Module $modulePath -Force
+}
+
+BeforeDiscovery {
+    $script:RepoRoot = Split-Path -Parent $PSScriptRoot
+    $script:BuilderTestCases = @(
+        @{ ScriptName = "tiny11maker-headless.ps1"; ScriptPath = (Join-Path $script:RepoRoot "scripts\tiny11maker-headless.ps1") },
+        @{ ScriptName = "tiny11coremaker-headless.ps1"; ScriptPath = (Join-Path $script:RepoRoot "scripts\tiny11coremaker-headless.ps1") },
+        @{ ScriptName = "nano11builder-headless.ps1"; ScriptPath = (Join-Path $script:RepoRoot "scripts\nano11builder-headless.ps1") }
+    )
+}
 
 Describe "Production Windows build-number parser" {
     It "extracts build and UBR from a standard four-part Windows version" {
@@ -41,11 +52,13 @@ Describe "Production Windows build-number parser" {
 }
 
 Describe "Production source-image selection" {
-    $images = @(
-        [pscustomobject]@{ ImageIndex = 1; ImageName = "Windows 11 Home" },
-        [pscustomobject]@{ ImageIndex = 4; ImageName = "Windows 11 Education" },
-        [pscustomobject]@{ ImageIndex = 6; ImageName = "Windows 11 Pro" }
-    )
+    BeforeAll {
+        $images = @(
+            [pscustomobject]@{ ImageIndex = 1; ImageName = "Windows 11 Home" },
+            [pscustomobject]@{ ImageIndex = 4; ImageName = "Windows 11 Education" },
+            [pscustomobject]@{ ImageIndex = 6; ImageName = "Windows 11 Pro" }
+        )
+    }
 
     It "selects Pro by exact image name when the source index is automatic" {
         $selection = Select-Tiny11SourceImage -Images $images -RequestedIndex 0 -Edition Pro -ImagePath "fixture.wim"
@@ -100,28 +113,19 @@ Describe "Production source-image selection" {
 }
 
 Describe "All builders use the production metadata module" {
-    $repoRoot = Split-Path -Parent $PSScriptRoot
-    $scripts = @(
-        "$repoRoot\scripts\tiny11maker-headless.ps1",
-        "$repoRoot\scripts\tiny11coremaker-headless.ps1",
-        "$repoRoot\scripts\nano11builder-headless.ps1"
-    )
+    It "<ScriptName> imports and calls the shared production helpers" -TestCases $script:BuilderTestCases {
+        param($ScriptName, $ScriptPath)
+        $content = Get-Content -Path $ScriptPath -Raw
+        $content | Should -Match ([regex]::Escape("Import-Module (Join-Path `$PSScriptRoot 'tiny11_image_metadata.psm1')"))
+        $content | Should -Match "Select-Tiny11SourceImage"
+        $content | Should -Match "Get-Tiny11BuildNumber"
+        $content | Should -Match "function Write-BuildInfo"
+    }
 
-    foreach ($scriptPath in $scripts) {
-        $scriptName = Split-Path -Leaf $scriptPath
-
-        It "$scriptName imports and calls the shared production helpers" {
-            $content = Get-Content -Path $scriptPath -Raw
-            $content | Should -Match ([regex]::Escape("Import-Module (Join-Path `$PSScriptRoot 'tiny11_image_metadata.psm1')"))
-            $content | Should -Match "Select-Tiny11SourceImage"
-            $content | Should -Match "Get-Tiny11BuildNumber"
-            $content | Should -Match "function Write-BuildInfo"
-        }
-
-        It "$scriptName queries detailed metadata by the selected index" {
-            $content = Get-Content -Path $scriptPath -Raw
-            $content | Should -Match ([regex]::Escape('Get-WindowsImage -ImagePath $sourceImagePath -Index $script:INDEX'))
-            $content | Should -Match ([regex]::Escape("PSObject.Properties.Match('Version')"))
-        }
+    It "<ScriptName> queries detailed metadata by the selected index" -TestCases $script:BuilderTestCases {
+        param($ScriptName, $ScriptPath)
+        $content = Get-Content -Path $ScriptPath -Raw
+        $content | Should -Match ([regex]::Escape('Get-WindowsImage -ImagePath $sourceImagePath -Index $script:INDEX'))
+        $content | Should -Match ([regex]::Escape("PSObject.Properties.Match('Version')"))
     }
 }

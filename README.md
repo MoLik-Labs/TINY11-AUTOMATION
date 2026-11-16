@@ -68,7 +68,7 @@ If the ISO contains `install.esd`, the builder exports the selected edition to a
 - `Build Nano11 (Experimental VM/Lab)` is manual-only.
 - For manual dispatch, enter the actual Windows version for the artifact label. Each build fetches a fresh x64 ISO link from Microsoft inside the Windows runner, checks it against the requested release, masks the signed URL, and keeps it only in runner-local job state. The signed URL is not a workflow input or artifact. The edition is selected independently by image name unless you provide a verified source index.
 - Microsoft build workflows resolve only direct HTTPS ISO URLs from approved Microsoft download hosts. They produce a GitHub Actions artifact with **7-day retention** for testing. This is temporary CI storage, not long-term release hosting.
-- `Repository validation` runs Python tests/config checks, checksum-pinned GitHub Actions workflow lint, and a Windows PowerShell syntax parser on pushes and pull requests. These checks do not replace a full ISO build or hardware/VM validation.
+- `Repository validation` runs Python tests/config checks, version-pinned GitHub Actions workflow lint, and a Windows PowerShell syntax parser on pushes and pull requests. These checks do not replace a full ISO build or hardware/VM validation.
 - Dependabot proposes weekly grouped updates for the pinned Python runtime dependencies and GitHub Actions; updates still require review and passing CI.
 
 ### Auto-build from your own direct ISO link
