@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Pester tests for the Tiny11 Core-Gaming profile.
 
@@ -468,7 +468,12 @@ Describe 'Core-Gaming workflow' {
         $workflowRaw | Should -Not -Match '(?i)sourceforge|softprops/action-gh-release'
         $workflowRaw | Should -Not -Match '(?m)^\s*contents:\s*write'
         $workflowRaw | Should -Match 'actions/upload-artifact@v7'
-        $workflowRaw | Should -Not -Match '(?m)^[ \t]*retention-days:[ \t]*(?!7\b)'
+        $retentionDays = @(
+            [regex]::Matches($workflowRaw, '(?m)^[ \t]*retention-days:[ \t]*(\d+)[ \t]*$') |
+                ForEach-Object { [int]$_.Groups[1].Value }
+        )
+        $retentionDays | Should -Not -BeNullOrEmpty
+        foreach ($days in $retentionDays) { $days | Should -Be 7 }
         $workflowRaw | Should -Match 'add-mask::\$\(\$iso\.Url\)'
         $workflowRaw | Should -Not -Match 'Substring\(0,\s*100\)'
     }
@@ -479,7 +484,7 @@ Describe 'Core-Gaming workflow' {
         $start | Should -BeGreaterThan 0
         $end | Should -BeGreaterThan $start
         $inputsBlock = $workflowRaw.Substring($start, $end - $start)
-        $inputs = [regex]::Matches($inputsBlock, '(?m)^\s{6}([a-z_]+):') |
+        $inputs = [regex]::Matches($inputsBlock, '(?m)^\s{6}([a-z0-9_]+):') |
             ForEach-Object { $_.Groups[1].Value }
         $inputCount = @($inputs).Count
         $inputCount | Should -Be 24
@@ -508,7 +513,7 @@ Describe 'Core-Gaming workflow' {
         $end   | Should -BeGreaterThan $start
         $inputsBlock = $workflowRaw.Substring($start, $end - $start)
 
-        $gamingInputs = [regex]::Matches($inputsBlock, '(?m)^\s{6}([a-z_]+):') |
+        $gamingInputs = [regex]::Matches($inputsBlock, '(?m)^\s{6}([a-z0-9_]+):') |
             ForEach-Object { $_.Groups[1].Value }
 
         foreach ($group in @($profile.defaultGroups.PSObject.Properties.Name)) {
