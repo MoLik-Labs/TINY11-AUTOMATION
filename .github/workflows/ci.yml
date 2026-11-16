@@ -53,7 +53,24 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Lint workflows and expressions with version-pinned actionlint
-        run: npm exec --yes --package=@kjanat/actionlint@1.17.1 -- actionlint -color .github/workflows/*.yml
+        shell: bash
+        run: |
+          set +e
+          npm exec --yes --package=@kjanat/actionlint@1.17.1 -- actionlint -color .github/workflows/*.yml > "$RUNNER_TEMP/actionlint.log" 2>&1
+          lint_status=$?
+          cat "$RUNNER_TEMP/actionlint.log"
+          if [ "$lint_status" -ne 0 ]; then
+            {
+              echo '### actionlint diagnostics'
+              echo '```text'
+              cat "$RUNNER_TEMP/actionlint.log"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            while IFS= read -r line; do
+              echo "::error title=actionlint::$line"
+            done < "$RUNNER_TEMP/actionlint.log"
+          fi
+          exit "$lint_status"
 
   powershell-syntax:
     name: PowerShell syntax validation
