@@ -1,32 +1,111 @@
 <?xml version="1.0" encoding="utf-8"?>
-<unattend xmlns="urn:schemas-microsoft-com:unattend">
-    <settings pass="windowsPE">
-        <component xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" name="Microsoft-Windows-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
-            <DynamicUpdate>
-                <WillShowUI>OnError</WillShowUI>
-            </DynamicUpdate>
-            <ImageInstall>
-                <OSImage>
-                    <Compact>false</Compact>
-                    <WillShowUI>OnError</WillShowUI>
-                    <InstallFrom>
-                        <MetaData wcm:action="add">
-                            <Key>/IMAGE/INDEX</Key>
-                            <Value>1</Value>
-                        </MetaData>
-                    </InstallFrom>
-                </OSImage>
-            </ImageInstall>
-            <UserData>
-                <ProductKey>
-                    <Key />
-                </ProductKey>
-            </UserData>
-        </component>
-    </settings>
-    <settings pass="oobeSystem">
-        <component xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
-            <ConfigureChatAutoInstall>false</ConfigureChatAutoInstall>
-        </component>
-    </settings>
+<!--
+  TINY11-AUTOMATION answer-file template for the Standard and VM/Lab builders.
+
+  Builders rewrite /IMAGE/INDEX to the selected image's final media index and
+  transform account settings according to -AccountSetup. Both default to "classic",
+  which removes the pre-created Admin, blank password, auto-logon and first-logon
+  cleanup blocks below. Standard also forces <Compact>false</Compact>; Core/Lab keeps
+  this template's Compact setting.
+
+  DANGER: Using this XML directly, without running it through a builder, creates a
+  local Admin account with a blank password and one auto-logon. Do not deploy the
+  untransformed template on an internet-connected machine. auto-admin is an explicit
+  lab-only opt-in; classic is the safe builder default.
+
+  This template does not bypass TPM, Secure Boot, CPU, RAM or storage checks. Those
+  checks remain enabled unless a VM/Lab workflow explicitly enables its testing-only
+  -BypassHardwareRequirements switch. DynamicUpdate controls Setup downloads only;
+  it does not disable Windows Update after installation.
+
+  Every <component> must be inside a <settings pass="..."> element.
+-->
+<unattend xmlns="urn:schemas-microsoft-com:unattend" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+	<settings pass="windowsPE">
+		<component name="Microsoft-Windows-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+			<DynamicUpdate>
+				<!-- Never pull setup updates from the internet - keeps the install offline. -->
+				<Enable>false</Enable>
+				<WillShowUI>Never</WillShowUI>
+			</DynamicUpdate>
+			<ImageInstall>
+				<OSImage>
+					<Compact>true</Compact>
+					<WillShowUI>OnError</WillShowUI>
+					<InstallFrom>
+						<MetaData wcm:action="add">
+							<Key>/IMAGE/INDEX</Key>
+							<Value>1</Value>
+						</MetaData>
+					</InstallFrom>
+				</OSImage>
+			</ImageInstall>
+			<UserData>
+				<AcceptEula>true</AcceptEula>
+				<ProductKey>
+					<!-- Empty key: Setup installs without prompting for a product key. -->
+					<Key/>
+				</ProductKey>
+			</UserData>
+			<UseConfigurationSet>false</UseConfigurationSet>
+		</component>
+	</settings>
+	<settings pass="specialize">
+		<component name="Microsoft-Windows-Deployment" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+			<RunSynchronous>
+				<RunSynchronousCommand wcm:action="add">
+					<Order>1</Order>
+					<Path>reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\OOBE" /v BypassNRO /t REG_DWORD /d 1 /f</Path>
+					<Description>Re-enable the offline "I don't have internet" OOBE path (required on 24H2/25H2/26H2)</Description>
+				</RunSynchronousCommand>
+				<RunSynchronousCommand wcm:action="add">
+					<Order>2</Order>
+					<Path>reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\OOBE" /v DisableOnline /t REG_DWORD /d 1 /f</Path>
+					<Description>Stop OOBE from demanding a network connection or a Microsoft account</Description>
+				</RunSynchronousCommand>
+			</RunSynchronous>
+		</component>
+	</settings>
+	<settings pass="oobeSystem">
+		<component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+			<UserAccounts>
+				<LocalAccounts>
+					<LocalAccount wcm:action="add">
+						<Name>Admin</Name>
+						<DisplayName>Admin</DisplayName>
+						<Description>Local administrator</Description>
+						<Group>Administrators</Group>
+						<Password>
+							<!-- Blank password. Add a <Value> and keep PlainText true to set one. -->
+							<Value></Value>
+							<PlainText>true</PlainText>
+						</Password>
+					</LocalAccount>
+				</LocalAccounts>
+			</UserAccounts>
+			<AutoLogon>
+				<Username>Admin</Username>
+				<Enabled>true</Enabled>
+				<LogonCount>1</LogonCount>
+				<Password>
+					<Value></Value>
+					<PlainText>true</PlainText>
+				</Password>
+			</AutoLogon>
+			<OOBE>
+				<HideEULAPage>true</HideEULAPage>
+				<HideOEMRegistrationScreen>true</HideOEMRegistrationScreen>
+				<HideOnlineAccountScreens>true</HideOnlineAccountScreens>
+				<HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>
+				<ProtectYourPC>3</ProtectYourPC>
+			</OOBE>
+			<FirstLogonCommands>
+				<SynchronousCommand wcm:action="add">
+					<Order>1</Order>
+					<Description>Turn auto-logon back off now that the account has been created</Description>
+					<CommandLine>reg add "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" /v AutoAdminLogon /t REG_SZ /d 0 /f</CommandLine>
+				</SynchronousCommand>
+			</FirstLogonCommands>
+		</component>
+	</settings>
 </unattend>

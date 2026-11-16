@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Headless script to build a minimized Windows 11 Core image for CI/CD automation.
 
@@ -32,9 +32,72 @@
 .PARAMETER SkipCleanup
     Skip cleanup of temporary files after ISO creation (optional, for debugging)
 
+.PARAMETER RemoveDefender
+    Completely remove Windows Defender / Security so that no antimalware service
+    is present in the finished image (optional). Off by default - the standard
+    Core build only disables the Defender services.
+
+    A Core-Gaming build (-GamingProfile) always removes Defender / Security, so
+    this switch is redundant there; it stays meaningful for a plain Core build.
+
+.PARAMETER AccountSetup
+    How the local account is set up on first boot (optional, default 'classic'):
+      classic    - default; run offline local-account OOBE so you create your own
+                   account with your chosen name. No pre-created blank-password admin.
+      auto-admin - explicitly opt in to a local 'Admin' with a blank password and
+                   one auto-logon. Use only in disposable, isolated lab VMs.
+
+.PARAMETER GamingProfile
+    Apply the experimental Tiny11 Core-Gaming VM/Lab profile (optional). It changes
+    power, device, security, service, feature and application settings. The results
+    are hardware/workload-dependent and are not benchmark-validated; do not use this
+    profile for a daily-use machine. See GAMING.md for scope and irreversible risks.
+
+    Gaming groups are defined in config/gaming_profile.json and can be toggled with
+    -GamingGroups. The separate essentials layer is always applied to a Core-Gaming
+    build.
+
+    A Core-Gaming build also removes Windows Defender / Security and Windows Update
+    components. These changes are not group-controlled and can break security and
+    servicing; build plain Core if those components must be retained. This is a
+    destructive VM/Lab configuration, not a supported way to manage a daily-use PC.
+
+    A Core-Gaming build also ALWAYS applies the essentials pass defined in
+    config/essentials_profile.json - the post-install debloat list (activity
+    history, BitLocker auto-encryption, delivery optimization, location, telemetry,
+    WPBT, OneDrive, Windows AI, the right-click/Start menu layouts, and a long list
+    of services moved to manual or disabled). Like the Defender and Windows Update
+    removals it has no group flag and no workflow input: it is part of what
+    Core-Gaming means. See the Essentials section of GAMING.md.
+
+.PARAMETER GamingProfileFile
+    Path to the gaming profile JSON (optional). Defaults to
+    config/gaming_profile.json in the repository root.
+
+.PARAMETER GamingGroups
+    Hashtable of per-group on/off overrides (optional), e.g.
+    @{ disable_mpo = $false; disable_fso = $false }.
+    Groups not listed keep the defaults from the profile JSON.
+
+.PARAMETER HagsMode
+    Hardware Accelerated GPU Scheduling: 'on' (default) forces it on, 'off' forces
+    it off, 'leave' keeps the Core default untouched. AtlasOS treats HAGS as
+    system-dependent, so it is a toggle here rather than a fixed choice.
+
 .EXAMPLE
     .\tiny11coremaker-headless.ps1 -ISO E -INDEX 0 -Edition Pro
     .\tiny11coremaker-headless.ps1 -ISO E -INDEX 0 -Edition Home -SCRATCH D -SkipCleanup
+    .\tiny11coremaker-headless.ps1 -ISO E -INDEX 0 -Edition Pro -RemoveDefender
+    .\tiny11coremaker-headless.ps1 -ISO E -INDEX 0 -Edition Pro -AccountSetup classic
+
+.EXAMPLE
+    # Experimental Core-Gaming build (VM/Lab only; see GAMING.md for risks)
+    .\tiny11coremaker-headless.ps1 -ISO E -INDEX 0 -Edition Pro -GamingProfile -PreserveWinRE
+
+.EXAMPLE
+    # Core-Gaming with selected groups disabled
+    .\tiny11coremaker-headless.ps1 -ISO E -INDEX 0 -Edition Pro -GamingProfile -HagsMode off `
+        -GamingGroups @{ disable_security_mitigations = $false; disable_mpo = $false }
 
 .NOTES
     Original builder: ntdevlabs (https://github.com/ntdevlabs/tiny11builder)
@@ -72,7 +135,27 @@ param (
     [switch]$ENABLE_DOTNET35,
 
     [Parameter(Mandatory=$false, HelpMessage="Preserve the source WinRE image for physical hardware and EFI/UEFI installs; disabled by default for VM/Lab builds.")]
-    [switch]$PreserveWinRE
+    [switch]$PreserveWinRE,
+
+    [Parameter(Mandatory=$false, HelpMessage="Completely remove Windows Defender / Security so no antimalware service is present in the finished image. Off by default - the standard Core build only disables the Defender services. A Core-Gaming build always does this, so the switch is redundant there.")]
+    [switch]$RemoveDefender,
+
+    [Parameter(Mandatory=$false, HelpMessage="Local account setup. 'classic' (default) runs offline OOBE so you create your own local account. 'auto-admin' explicitly creates a blank-password Admin account with one auto-logon; use only in a disposable isolated VM.")]
+    [ValidateSet('auto-admin', 'classic')]
+    [string]$AccountSetup = 'classic',
+
+    [Parameter(Mandatory=$false, HelpMessage="Apply the experimental Tiny11 Core-Gaming VM/Lab profile. Removes security and servicing components and changes hardware-dependent settings; no performance gain is claimed. See GAMING.md.")]
+    [switch]$GamingProfile,
+
+    [Parameter(Mandatory=$false, HelpMessage="Path to the gaming profile JSON. Defaults to config/gaming_profile.json in the repository root.")]
+    [string]$GamingProfileFile,
+
+    [Parameter(Mandatory=$false, HelpMessage="Hashtable of per-group on/off overrides, e.g. @{ disable_mpo = `$false }. Groups not listed use the profile defaults.")]
+    [hashtable]$GamingGroups,
+
+    [Parameter(Mandatory=$false, HelpMessage="Hardware Accelerated GPU Scheduling: 'on' forces it on, 'off' forces it off, 'leave' keeps the Core default.")]
+    [ValidateSet('on', 'off', 'leave')]
+    [string]$HagsMode = 'on'
 )
 
 #---------[ Error Handling ]---------
@@ -93,6 +176,33 @@ $scratchDir = "$ScratchDisk\scratchdir"
 $tiny11Dir = "$ScratchDisk\tiny11"
 $outputISO = "$PSScriptRoot\tiny11-core.iso"
 $logFile = "$PSScriptRoot\tiny11-core_$(Get-Date -Format yyyyMMdd_HHmmss).log"
+$script:DownloadedOscdimg = $false
+$script:LoadedRegistryHives = @()
+
+#---------[ Gaming profile (optional) ]---------
+# The profile engine is data-driven from config/gaming_profile.json and is dot-sourced
+# only when -GamingProfile is set, so a plain Core build is completely unaffected.
+$gamingProfileData = $null
+$gamingGroupFlags = $null
+$essentialsProfileData = $null
+$gamingConfigDir = Join-Path (Split-Path $PSScriptRoot -Parent) 'config'
+
+if ($GamingProfile) {
+    $gamingModule = Join-Path $PSScriptRoot 'gaming-profile.ps1'
+    if (-not (Test-Path -LiteralPath $gamingModule)) {
+        throw "Gaming profile requested but the engine was not found at $gamingModule"
+    }
+    . $gamingModule
+
+    # The essentials layer is Core-Gaming only and is not toggleable: no group flag, no
+    # workflow input. It reproduces the post-install debloat pass that would otherwise be
+    # run by hand on every fresh install.
+    $essentialsModule = Join-Path $PSScriptRoot 'essentials-profile.ps1'
+    if (-not (Test-Path -LiteralPath $essentialsModule)) {
+        throw "Gaming profile requested but the essentials engine was not found at $essentialsModule"
+    }
+    . $essentialsModule
+}
 
 # Initialize admin identifiers for permission operations
 try {
@@ -110,6 +220,168 @@ function Write-Log {
     $logMessage = "[$timestamp] [$Level] $Message"
     Write-Output $logMessage
     Add-Content -Path $logFile -Value $logMessage -ErrorAction SilentlyContinue
+}
+
+function Invoke-NativeCommand {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$true)][string]$FilePath,
+        [Parameter(Mandatory=$true)][string[]]$Arguments,
+        [int[]]$SuccessExitCodes = @(0),
+        [switch]$Quiet
+    )
+
+    # Windows PowerShell 5.1 may promote redirected native stderr to a terminating
+    # error under $ErrorActionPreference = Stop. Scope it to Continue and make the
+    # native exit code authoritative, preserving captured output for diagnostics.
+    $previousEap = $ErrorActionPreference
+    $output = @()
+    $exitCode = $null
+    try {
+        $ErrorActionPreference = 'Continue'
+        $output = & $FilePath @Arguments 2>&1
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousEap
+    }
+
+    if ($null -eq $exitCode -or $exitCode -notin $SuccessExitCodes) {
+        $details = (@($output) | ForEach-Object { $_.ToString() }) -join [Environment]::NewLine
+        throw "Native command failed with exit code ${exitCode}: $FilePath $($Arguments -join ' ')`n$details"
+    }
+
+    if (-not $Quiet -and $null -ne $output) {
+        return $output
+    }
+}
+
+function Load-RegistryHive {
+    param(
+        [Parameter(Mandatory=$true)][string]$HiveName,
+        [Parameter(Mandatory=$true)][string]$HivePath
+    )
+
+    Invoke-NativeCommand -FilePath 'reg.exe' -Arguments @('load', $HiveName, $HivePath) -Quiet
+    if ($HiveName -notin $script:LoadedRegistryHives) {
+        $script:LoadedRegistryHives += $HiveName
+    }
+}
+
+function Get-TakeownYesAnswer {
+    # takeown /R needs /D, otherwise it asks "Do you want to replace the directory permissions...? [Y/N]"
+    # on the console for every folder the administrator cannot list (e.g. ProgramData\Microsoft\Windows
+    # Defender Advanced Threat Protection, present only in Pro/Enterprise) and the build waits forever.
+    # /D accepts only the "yes" letter of the system language: Y in English, T in Polish, J in German,
+    # O in French... - "/D Y" is rejected on those systems. Probe once on an empty folder and cache it.
+    $cached = Get-Variable -Name takeownYesAnswer -Scope Script -ValueOnly -ErrorAction SilentlyContinue
+    if ($cached) { return $cached }
+
+    $answer = 'Y'
+    $probe = Join-Path ([IO.Path]::GetTempPath()) ('takeown-probe-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $probe -Force | Out-Null
+    try {
+        foreach ($candidate in @('Y', 'T', 'J', 'O', 'S', 'A', 'I', 'E', [string][char]0x414)) {
+            & { $ErrorActionPreference = 'Continue'; & takeown.exe /F $probe /R /D $candidate 2>&1 | Out-Null }
+            if ($LASTEXITCODE -eq 0) { $answer = $candidate; break }
+        }
+    } finally {
+        Remove-Item -LiteralPath $probe -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    Set-Variable -Name takeownYesAnswer -Scope Script -Value $answer
+    return $answer
+}
+
+function Write-IsoAnswerFile {
+    # Copies the unattend template to $Destination, pinning /IMAGE/INDEX to the
+    # target media's final image index. The builder exports one selected image, so
+    # the generated ISO uses index 1 even when the source image had another index.
+    #
+    # The content is parsed as XML before it is written: Windows Setup hard-fails on
+    # a malformed answer file, and a rejected answer file is exactly how the OOBE /
+    # local-account automation silently stops working.
+    param(
+        [Parameter(Mandatory=$true)][string]$Destination,
+        [Parameter(Mandatory=$false)][string]$Template,
+        [Parameter(Mandatory=$false)]
+        [ValidateSet('auto-admin', 'classic')]
+        [string]$AccountMode = 'classic',
+        [Parameter(Mandatory=$false)]
+        [ValidateRange(1, 2147483647)]
+        [int]$ImageIndex = 1,
+        [Parameter(Mandatory=$false)]
+        [bool]$Compact = $true
+    )
+
+    if (-not $Template) {
+        $Template = @(
+            (Join-Path $PSScriptRoot "autounattend.xml"),
+            (Join-Path (Split-Path $PSScriptRoot -Parent) "autounattend.xml")
+        ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+    }
+
+    if (-not $Template -or -not (Test-Path $Template)) {
+        Write-Log "No unattend template found - OOBE will not be automated" "WARN"
+        return
+    }
+
+    try {
+        $content = Get-Content -LiteralPath $Template -Raw
+        $imageIndexPattern = '(<Key>/IMAGE/INDEX</Key>\s*<Value>)\d+(</Value>)'
+        if ([regex]::Matches($content, $imageIndexPattern).Count -ne 1) {
+            throw "Answer-file template must contain exactly one /IMAGE/INDEX placeholder."
+        }
+        $content = [regex]::Replace(
+            $content,
+            $imageIndexPattern,
+            ('${1}' + $ImageIndex + '${2}')
+        )
+
+        $compactText = $Compact.ToString().ToLowerInvariant()
+        $compactPattern = '(<Compact>\s*)(?:true|false)(\s*</Compact>)'
+        if ([regex]::Matches($content, $compactPattern).Count -ne 1) {
+            throw "Answer-file template must contain exactly one Compact element."
+        }
+        $content = [regex]::Replace(
+            $content,
+            $compactPattern,
+            ('${1}' + $compactText + '${2}')
+        )
+
+        # Account mode 'classic': drop the pre-created account, the auto-logon and
+        # the first-logon cleanup so Windows Setup runs OOBE and the person
+        # installing creates their own local account with their own name.
+        #
+        # Everything else in the template is kept, so the install stays fully
+        # offline: DynamicUpdate stays off, the online-account screens stay hidden
+        # and BypassNRO / DisableOnline stay set. The result is the classic
+        # "create a local account" OOBE with no Microsoft account and no network.
+        #
+        # These three elements never nest inside an element of the same name in
+        # the template, so a non-greedy block match is unambiguous. The result is
+        # re-parsed as XML below, so a bad edit here fails the build loudly.
+        if ($AccountMode -eq 'classic') {
+            $content = [regex]::Replace($content, '(?s)\s*<UserAccounts>.*?</UserAccounts>', '')
+            $content = [regex]::Replace($content, '(?s)\s*<AutoLogon>.*?</AutoLogon>', '')
+            $content = [regex]::Replace($content, '(?s)\s*<FirstLogonCommands>.*?</FirstLogonCommands>', '')
+        }
+
+        # Throws if the template is not well-formed XML - we want that to be loud.
+        $null = [xml]$content
+
+        $destDir = Split-Path -Parent $Destination
+        if (-not (Test-Path $destDir)) {
+            New-Item -ItemType Directory -Force -Path $destDir | Out-Null
+        }
+
+        # UTF-8 without BOM - Setup is happier without a BOM on the answer file.
+        $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+        [System.IO.File]::WriteAllText($Destination, $content, $utf8NoBom)
+
+        Write-Log "Wrote unattended answer file to $Destination (IMAGE/INDEX = $ImageIndex, account mode = $AccountMode, Compact = $compactText)"
+    } catch {
+        Write-Log "Failed to write answer file to ${Destination}: $_" "ERROR"
+        throw
+    }
 }
 
 function Test-Prerequisites {
@@ -181,7 +453,7 @@ function Convert-ESDToWIM {
 
 function Copy-WindowsFiles {
     Write-Log "Copying Windows installation files from $DriveLetter..."
-    Copy-Item -Path "$DriveLetter\*" -Destination $tiny11Dir -Recurse -Force -ErrorAction SilentlyContinue
+    Copy-Item -Path "$DriveLetter\*" -Destination $tiny11Dir -Recurse -Force -ErrorAction Stop
 
     # Remove read-only attribute and delete install.esd if present
     if (Test-Path "$tiny11Dir\sources\install.esd") {
@@ -243,9 +515,9 @@ function Resolve-ImageIndex {
 function Mount-WindowsImageFile {
     Write-Log "Mounting Windows image (Index: $INDEX)..."
 
-    # Take ownership and set permissions
-    & takeown /F $wimFilePath /A | Out-Null
-    & icacls $wimFilePath /grant "$($adminGroup.Value):(F)" | Out-Null
+    # Take ownership and set permissions; do not continue if native calls fail.
+    Invoke-NativeCommand -FilePath 'takeown.exe' -Arguments @('/F', $wimFilePath, '/A') -Quiet
+    Invoke-NativeCommand -FilePath 'icacls.exe' -Arguments @($wimFilePath, '/grant', "$($adminGroup.Value):(F)") -Quiet
 
     Set-ItemProperty -Path $wimFilePath -Name IsReadOnly -Value $false -ErrorAction SilentlyContinue
 
@@ -377,6 +649,7 @@ function Remove-SystemPackages {
         "Microsoft-Windows-TabletPCMath-Package~",
         "Microsoft-Windows-StepsRecorder-Package~",
         "UserExperience-Recall-Package~",
+        "Microsoft-Windows-BitLocker-DriveEncryption-FVE-Package~",
         "Microsoft-Windows-AppManagement-AppV-Package~",
         "Microsoft-Edge-WebView-FOD-Package~"
     )
@@ -407,6 +680,229 @@ function Remove-SystemPackages {
     Write-Log "Removed $removeCount system packages"
 }
 
+function Remove-DefenderPayload {
+    # -RemoveDefender only. Strips the Defender / Security payload out of the
+    # mounted image: the Defender feature package, the Windows Security app, the
+    # on-disk Defender program + definition store and the Security Health
+    # binaries.
+    #
+    # This runs while the image is mounted but BEFORE its registry hives are
+    # loaded: DISM /Remove-Package needs exclusive access to the component store,
+    # which 'reg load' would otherwise lock.
+    #
+    # Every step is best-effort and logged. A partial removal still yields a
+    # working image - it just leaves a Defender component behind - so a failure
+    # here must not abort the whole build.
+    Write-Log "Removing Windows Defender / Security payload (RemoveDefender)..." "INFO"
+
+    # 1) Defender feature package(s).
+    $allPackages = & dism /English /image:$scratchDir /Get-Packages
+    $defenderPackages = $allPackages |
+        ForEach-Object { if ($_ -match 'Package Identity\s*:\s*(.+?)\s*$') { $Matches[1] } } |
+        Where-Object { $_ -match 'Windows-Defender-Client-Package|Windows-Defender-Client-WOW64-Package|Windows-Defender-Client-En-US-Package|Microsoft-Windows-SenseClient' } |
+        Select-Object -Unique
+
+    if ($defenderPackages) {
+        foreach ($identity in $defenderPackages) {
+            Write-Log "Removing Defender package: $identity"
+            & dism /English /image:$scratchDir /Remove-Package /PackageName:$identity /Quiet /NoRestart | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                Write-Log "DISM could not remove $identity (exit $LASTEXITCODE) - continuing" "WARN"
+            }
+        }
+    } else {
+        Write-Log "No Defender feature package found in the image" "WARN"
+    }
+
+    # 2) The Windows Security app (SecHealthUI).
+    $securityApps = & dism /English /image:$scratchDir /Get-ProvisionedAppxPackages |
+        ForEach-Object { if ($_ -match 'PackageName : (.*)') { $Matches[1] } } |
+        Where-Object { $_ -like '*SecHealthUI*' }
+    foreach ($app in $securityApps) {
+        Write-Log "Removing Windows Security app: $app"
+        & dism /English /image:$scratchDir /Remove-ProvisionedAppxPackage "/PackageName:$app" | Out-Null
+    }
+
+    # 3) On-disk Defender program + definition store.
+    $defenderPaths = @(
+        "$scratchDir\Program Files\Windows Defender",
+        "$scratchDir\Program Files (x86)\Windows Defender",
+        "$scratchDir\ProgramData\Microsoft\Windows Defender",
+        "$scratchDir\ProgramData\Microsoft\Windows Defender Advanced Threat Protection"
+    )
+    foreach ($path in $defenderPaths) {
+        if (Test-Path $path) {
+            Write-Log "Deleting Defender data: $path"
+            & takeown /f $path /r /d $(Get-TakeownYesAnswer) /a | Out-Null
+            & icacls $path /grant "$($adminGroup.Value):(F)" /T /C | Out-Null
+            Remove-Item -Path $path -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    # 4) Security Health binaries (the tray agent behind the "Windows Security"
+    #    shield in the notification area).
+    $securityHealthBinaries = Get-ChildItem -Path "$scratchDir\Windows\System32" -Filter "SecurityHealth*" -File -ErrorAction SilentlyContinue
+    foreach ($binary in $securityHealthBinaries) {
+        Write-Log "Deleting Security Health binary: $($binary.Name)"
+        & takeown /f $binary.FullName /a | Out-Null
+        & icacls $binary.FullName /grant "$($adminGroup.Value):(F)" /C | Out-Null
+        Remove-Item -Path $binary.FullName -Force -ErrorAction SilentlyContinue
+    }
+
+    Write-Log "Defender / Security payload removal finished"
+}
+
+function Remove-WindowsUpdatePayload {
+    # -GamingProfile only. Payload half of the complete Windows Update removal, so
+    # it runs while the image is mounted but BEFORE its registry hives are loaded.
+    #
+    # The always-on Core pass removes selected update-related files. This Gaming-only
+    # step also removes selected orchestrator task folders; update/servicing behavior
+    # after these changes is Windows-build-dependent and not validated here.
+    Write-Log "Removing the Windows Update payload (GamingProfile)..." "INFO"
+
+    # Remove selected Update Orchestrator task folders as part of this experimental
+    # image profile. This can break servicing and does not guarantee that later Windows
+    # servicing cannot restore or recreate components.
+    foreach ($taskFolder in @(
+        'Windows\System32\Tasks\Microsoft\Windows\UpdateOrchestrator',
+        'Windows\System32\Tasks\Microsoft\Windows\WindowsUpdate'
+    )) {
+        $taskPath = Join-Path $scratchDir $taskFolder
+        if (Test-Path $taskPath) {
+            Remove-Item -Path $taskPath -Recurse -Force -ErrorAction SilentlyContinue
+            if (Test-Path $taskPath) {
+                Write-Log "Could not delete scheduled task folder: $taskFolder" "WARN"
+            } else {
+                Write-Log "Deleted scheduled task folder: $taskFolder"
+            }
+        }
+    }
+
+    # Remove selected Windows Update client executables. Keep wuaueng.dll and
+    # wuapi.dll because other inbox components may reference them. The effect of
+    # deleting selected clients/services/tasks on future servicing is not guaranteed.
+    foreach ($relative in @(
+        'Windows\System32\wuauclt.exe',
+        'Windows\System32\wuapihost.exe'
+    )) {
+        $binary = Join-Path $scratchDir $relative
+        if (Test-Path $binary) {
+            Remove-Item -Path $binary -Force -ErrorAction SilentlyContinue
+            Write-Log "Deleted Windows Update executable: $relative"
+        }
+    }
+
+    Write-Log "Windows Update payload removal finished"
+}
+
+function Remove-DefenderRegistry {
+    # -RemoveDefender only. Registry half of the removal, so it must run AFTER
+    # Load-RegistryHives.
+    #
+    # The Defender service keys are deleted outright rather than set to Start=4.
+    # Merely disabling WinDefend leaves the service defined, so the "Antimalware
+    # Service Executable" (MsMpEng.exe) can still be re-armed; deleting the key is
+    # what makes the antimalware service genuinely absent from the finished image.
+    Write-Log "Removing Defender / Security registry keys (RemoveDefender)..." "INFO"
+
+    # Services that make up Defender and the Windows Security platform.
+    $defenderServices = @(
+        'WinDefend',             # Microsoft Defender Antivirus Service (MsMpEng.exe)
+        'WdNisSvc',              # Network Inspection Service
+        'WdNisDrv',              # Network Inspection driver
+        'WdFilter',              # Defender file-system mini-filter
+        'WdDevFlt',              # Defender device filter
+        'WdBoot',                # Defender boot driver
+        'Sense',                 # Defender for Endpoint / EDR
+        'SecurityHealthService'  # Windows Security Center host
+    )
+    foreach ($service in $defenderServices) {
+        $serviceKey = "HKLM:\zSYSTEM\ControlSet001\Services\$service"
+        if (Test-Path $serviceKey) {
+            Remove-Item -Path $serviceKey -Recurse -Force -ErrorAction SilentlyContinue
+            if (Test-Path $serviceKey) {
+                Write-Log "Could not delete Defender service key (locked or access denied): $service" "WARN"
+            } else {
+                Write-Log "Deleted Defender service key: $service"
+            }
+        } else {
+            Write-Log "Defender service key not present: $service"
+        }
+    }
+
+    # Security Center and System Guard Runtime Monitor are shared Windows
+    # components rather than Defender itself, so they are disabled rather than
+    # deleted - removing their keys outright risks breaking unrelated plumbing.
+    foreach ($service in @('wscsvc', 'SgrmAgent', 'SgrmBroker', 'MsSecFlt')) {
+        Set-RegistryValue "HKLM\zSYSTEM\ControlSet001\Services\$service" 'Start' 'REG_DWORD' '4'
+    }
+
+    # Defender configuration + policy hives.
+    foreach ($key in @('HKLM:\zSOFTWARE\Microsoft\Windows Defender', 'HKLM:\zSOFTWARE\Policies\Microsoft\Windows Defender')) {
+        if (Test-Path $key) {
+            Remove-Item -Path $key -Recurse -Force -ErrorAction SilentlyContinue
+            if (Test-Path $key) {
+                Write-Log "Could not delete Defender registry key (locked or access denied): $key" "WARN"
+            } else {
+                Write-Log "Deleted Defender registry key: $key"
+            }
+        }
+    }
+
+    Write-Log "Defender / Security registry removal finished"
+}
+
+function Remove-WindowsUpdateStack {
+    # -GamingProfile only. Registry half of the complete Windows Update removal, so
+    # it must run AFTER Load-RegistryHives.
+    #
+    # The always-on Core tweak sets wuauserv to Start=4 and redirects Windows Update
+    # to localhost. That is NOT sufficient on modern Windows, and it is why a Core
+    # image can still show "Updates are underway, do not turn off your PC":
+    #
+    #   * WaaSMedicSvc (Windows Update Medic) exists specifically to detect a
+    #     disabled or broken Windows Update and put it back.
+    #   * UsoSvc (Update Orchestrator) runs the servicing pass at boot.
+    #
+    # Leave either in place and Windows Update re-arms itself a restart or two
+    # later. The keys are deleted outright rather than set to Start=4, matching how
+    # Remove-DefenderRegistry treats the Defender services.
+    #
+    # DoSvc (Delivery Optimization) is deliberately NOT touched here - it is owned
+    # by the profile's strip_background_noise group, so deleting it unconditionally
+    # would ignore that group's toggle.
+    Write-Log "Removing the Windows Update stack (GamingProfile)..." "INFO"
+
+    foreach ($service in @(
+        'WaaSMedicSvc',   # Windows Update Medic - repairs and re-enables Windows Update
+        'UsoSvc',         # Update Orchestrator - the servicing pass at boot
+        'wuauserv'        # Windows Update
+    )) {
+        $serviceKey = "HKLM:\zSYSTEM\ControlSet001\Services\$service"
+        if (Test-Path $serviceKey) {
+            Remove-Item -Path $serviceKey -Recurse -Force -ErrorAction SilentlyContinue
+            if (Test-Path $serviceKey) {
+                Write-Log "Could not delete Windows Update service key (locked or access denied): $service" "WARN"
+            } else {
+                Write-Log "Deleted Windows Update service key: $service"
+            }
+        } else {
+            Write-Log "Windows Update service key not present: $service"
+        }
+    }
+
+    # Policy side, belt and braces alongside the always-on localhost redirect.
+    Set-RegistryValue 'HKLM\zSOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU' 'NoAutoUpdate' 'REG_DWORD' '1'
+
+    # The Settings page visibility value is deliberately NOT written here.
+    # Apply-RegistryTweaks owns it and already hides both pages with valid page
+    # ids, so a second write site would only reintroduce a call-order dependency
+    # between the two paths.
+
+    Write-Log "Windows Update stack removal finished"
+}
+
 function Remove-EdgeAndOneDrive {
     Write-Log "Removing Microsoft Edge and Edge WebView..."
 
@@ -421,7 +917,7 @@ function Remove-EdgeAndOneDrive {
     foreach ($path in $edgePaths) {
         if (Test-Path $path) {
             Write-Log "Deleting Edge component: $path"
-            & takeown /f $path /r /a | Out-Null
+            & takeown /f $path /r /d $(Get-TakeownYesAnswer) /a | Out-Null
             & icacls $path /grant "$($adminGroup.Value):(F)" /T /C | Out-Null
             Remove-Item -Path $path -Recurse -Force -ErrorAction SilentlyContinue
         }
@@ -433,7 +929,7 @@ function Remove-EdgeAndOneDrive {
     foreach ($winSxSPath in $winSxSPaths) {
         if (Test-Path $winSxSPath) {
             Write-Log "Taking ownership and removing WinSxS WebView folder: $winSxSPath"
-            & takeown /f $winSxSPath /r /a | Out-Null
+            & takeown /f $winSxSPath /r /d $(Get-TakeownYesAnswer) /a | Out-Null
             & icacls $winSxSPath /grant "$($adminGroup.Value):(F)" /T /C | Out-Null
             Remove-Item -Path $winSxSPath -Recurse -Force -ErrorAction SilentlyContinue
         }
@@ -480,11 +976,43 @@ function Remove-EdgeAndOneDrive {
     }
 }
 
+function Remove-BitLockerComponents {
+    Write-Log "Removing BitLocker components and binaries..."
+
+    $bitlockerPaths = @(
+        "$scratchDir\Windows\BitLockerDiscoveryVolumeContents",
+        "$scratchDir\Windows\System32\BitLockerWizard.exe",
+        "$scratchDir\Windows\System32\BitLockerWizardElev.exe",
+        "$scratchDir\Windows\System32\BitLockerDeviceEncryption.exe",
+        "$scratchDir\Windows\System32\BitLockerCsp.dll",
+        "$scratchDir\Windows\SysWOW64\BitLockerCsp.dll"
+    )
+
+    foreach ($path in $bitlockerPaths) {
+        if (Test-Path $path) {
+            Write-Log "Deleting: $path"
+            & takeown /f $path /r /d $(Get-TakeownYesAnswer) /a 2>&1 | Out-Null
+            & icacls $path /grant "$($adminGroup.Value):(F)" /T /C 2>&1 | Out-Null
+            Remove-Item -Path $path -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    # Delete BitLocker MUI localization files
+    Get-ChildItem -Path "$scratchDir\Windows\System32" -Filter "BitLocker*.mui" -Recurse -File -ErrorAction SilentlyContinue |
+        ForEach-Object {
+            & takeown /f $_.FullName /a 2>&1 | Out-Null
+            & icacls $_.FullName /grant "$($adminGroup.Value):(F)" /C 2>&1 | Out-Null
+            Remove-Item -Path $_.FullName -Force -ErrorAction SilentlyContinue
+        }
+
+    Write-Log "BitLocker components removed"
+}
+
 function Remove-WinRE {
     Write-Log "Removing Windows Recovery Environment (winre.wim)..."
 
     $recoveryDir = "$scratchDir\Windows\System32\Recovery"
-    & takeown /f $recoveryDir /r /a 2>&1 | Out-Null
+    & takeown /f $recoveryDir /r /d $(Get-TakeownYesAnswer) /a 2>&1 | Out-Null
     & icacls $recoveryDir /grant "$($adminGroup.Value):(F)" /T /C 2>&1 | Out-Null
 
     $winRE = "$recoveryDir\winre.wim"
@@ -521,18 +1049,95 @@ function Patch-ReAgentXml {
 </WindowsRE>
 '@
 
-    try {
-        $recoveryDir = "$scratchDir\Windows\System32\Recovery"
-        if (-not (Test-Path $recoveryDir)) {
-            New-Item -ItemType Directory -Force -Path $recoveryDir | Out-Null
-        }
+    # Only ever patch a ReAgent.xml that is already there. Creating the file (and
+    # its parent directory) inside boot.wim adds entries the stock image does not
+    # have, which is a gratuitous deviation from Microsoft's boot media - and the
+    # boot media is precisely what third-party boot managers such as Ventoy
+    # inspect and patch. The registry values set alongside this
+    # (SkipInstallingWinRE / DisableRecovery / WinREEnabled) already suppress WinRE.
+    if (-not (Test-Path -LiteralPath $reagentXmlPath)) {
+        Write-Log "No ReAgent.xml at $reagentXmlPath - nothing to patch"
+        return
+    }
 
+    try {
         $utf8NoBom = New-Object System.Text.UTF8Encoding $false
         [System.IO.File]::WriteAllText($reagentXmlPath, $cleanXml.TrimStart(), $utf8NoBom)
         Write-Log "ReAgent.xml patched: all WinRE state/staging fields zeroed."
     } catch {
         Write-Log "Failed to patch ReAgent.xml: $_" "WARN"
     }
+}
+
+function Remove-TreeForcefully {
+    # Deletes a directory tree that Windows has made hostile to a plain
+    # `Remove-Item -Recurse -Force`. Returns $true once the path is gone.
+    #
+    # Why this exists: DISM servicing of the offline image materialises newer
+    # component versions into WinSxS.
+    # Those arrive owned by TrustedInstaller, carrying the ReadOnly attribute,
+    # and their folder names are long enough to push member files to *exactly*
+    # 260 characters. Each of those defeats a different part of a naive delete:
+    #
+    #   * DeleteFile returns ACCESS_DENIED for a ReadOnly file even when the ACL
+    #     grants delete, and Remove-Item's -Force cannot always clear the
+    #     attribute first.
+    #   * takeown/icacls use the legacy path APIs, so they silently skip anything
+    #     at or over MAX_PATH (icacls /C just keeps going) - which is why the
+    #     takeown+icacls pass earlier in Optimize-WinSxS did not save the delete.
+    #   * Files still held by the servicing stack need a retry.
+    #
+    # So: operate on a \\?\ extended-length path, take ownership using the
+    # locale-independent Administrators SID, clear the attributes, then delete
+    # through several mechanisms with backoff.
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [int]$MaxAttempts = 3
+    )
+
+    if (-not (Test-Path -LiteralPath $Path)) { return $true }
+
+    $long     = if ($Path.StartsWith('\\?\')) { $Path } else { "\\?\$Path" }
+    $adminSid = '*S-1-5-32-544'   # BUILTIN\Administrators, locale independent
+
+    # Cheap attempt first - this is all a healthy tree ever needs.
+    try { Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction Stop } catch { }
+    if (-not (Test-Path -LiteralPath $Path)) { return $true }
+
+    # Every native tool below reports trouble on stderr. Under the script-level
+    # $ErrorActionPreference = 'Stop', PowerShell 5.1 promotes redirected native
+    # stderr into a *terminating* error, which would abort the cleanup instead of
+    # letting the next strategy try. Scope it down for the duration.
+    $previousEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+            Write-Log "Force-deleting tree (attempt $attempt/$MaxAttempts): $Path" "WARN"
+
+            & takeown.exe /F $long /R /A /D $(Get-TakeownYesAnswer) 2>&1 | Out-Null
+            & icacls.exe  $long /grant "${adminSid}:(F)" /T /C /Q 2>&1 | Out-Null
+
+            # attrib.exe handles the bulk quickly; the .NET pass afterwards
+            # covers whatever attrib could not reach (it cannot take a \\?\).
+            & cmd.exe /c "attrib -R -S -H `"$long\*`" /S /D" 2>&1 | Out-Null
+            Get-ChildItem -LiteralPath $Path -Recurse -Force -File -ErrorAction SilentlyContinue |
+                ForEach-Object { try { $_.Attributes = [System.IO.FileAttributes]::Normal } catch { } }
+
+            try { Remove-Item -LiteralPath $long -Recurse -Force -ErrorAction Stop } catch { }
+            if (-not (Test-Path -LiteralPath $Path)) { return $true }
+
+            # cmd's rd walks the tree through a different code path and copes
+            # with some leftovers the .NET provider will not.
+            & cmd.exe /c "rd /s /q `"$long`"" 2>&1 | Out-Null
+            if (-not (Test-Path -LiteralPath $Path)) { return $true }
+
+            if ($attempt -lt $MaxAttempts) { Start-Sleep -Seconds (5 * $attempt) }
+        }
+    } finally {
+        $ErrorActionPreference = $previousEap
+    }
+
+    return (-not (Test-Path -LiteralPath $Path))
 }
 
 function Optimize-WinSxS {
@@ -546,7 +1151,7 @@ function Optimize-WinSxS {
 
     # Take ownership
     Write-Log "Taking ownership of WinSxS..."
-    & takeown /f $sourceDirectory /r /a | Out-Null
+    & takeown /f $sourceDirectory /r /d $(Get-TakeownYesAnswer) /a | Out-Null
     & icacls $sourceDirectory /grant "$($adminGroup.Value):(F)" /T /C | Out-Null
 
     $dirsToCopy = @()
@@ -635,20 +1240,29 @@ function Optimize-WinSxS {
     }
 
     Write-Log "Replacing WinSxS with minimal version..."
-    Remove-Item -Path $sourceDirectory -Recurse -Force
-    Rename-Item -Path $destinationDirectory -NewName "WinSxS"
-
-    Write-Log "WinSxS optimization complete"
+    if (Remove-TreeForcefully -Path $sourceDirectory) {
+        Rename-Item -Path $destinationDirectory -NewName "WinSxS"
+        Write-Log "WinSxS optimization complete"
+    } else {
+        # Do not throw away a ~25 minute build over one stubborn file. Drop the
+        # staging copy and keep the original WinSxS, which still yields a valid
+        # image - just a much larger one. Warned loudly so it can never be
+        # mistaken for a normal Core build.
+        Write-Log "Could not remove the original WinSxS tree - SKIPPING WinSxS optimization. The resulting ISO will be much larger than a normal Core build." "WARN"
+        if (-not (Remove-TreeForcefully -Path $destinationDirectory)) {
+            Write-Log "Could not remove the WinSxS_edit staging tree either; the ISO will be larger still." "WARN"
+        }
+    }
 }
 
 function Load-RegistryHives {
     Write-Log "Loading registry hives..."
 
-    reg load HKLM\zCOMPONENTS "$scratchDir\Windows\System32\config\COMPONENTS" | Out-Null
-    reg load HKLM\zDEFAULT "$scratchDir\Windows\System32\config\default" | Out-Null
-    reg load HKLM\zNTUSER "$scratchDir\Users\Default\ntuser.dat" | Out-Null
-    reg load HKLM\zSOFTWARE "$scratchDir\Windows\System32\config\SOFTWARE" | Out-Null
-    reg load HKLM\zSYSTEM "$scratchDir\Windows\System32\config\SYSTEM" | Out-Null
+    Load-RegistryHive 'HKLM\zCOMPONENTS' "$scratchDir\Windows\System32\config\COMPONENTS"
+    Load-RegistryHive 'HKLM\zDEFAULT' "$scratchDir\Windows\System32\config\default"
+    Load-RegistryHive 'HKLM\zNTUSER' "$scratchDir\Users\Default\ntuser.dat"
+    Load-RegistryHive 'HKLM\zSOFTWARE' "$scratchDir\Windows\System32\config\SOFTWARE"
+    Load-RegistryHive 'HKLM\zSYSTEM' "$scratchDir\Windows\System32\config\SYSTEM"
 
     Write-Log "Registry hives loaded"
 }
@@ -662,10 +1276,11 @@ function Set-RegistryValue {
     )
     try {
         if ($name) {
-            & 'reg' 'add' $path '/v' $name '/t' $type '/d' $value '/f' | Out-Null
+            $arguments = @('add', $path, '/v', $name, '/t', $type, '/d', $value, '/f')
         } else {
-            & 'reg' 'add' $path '/ve' '/t' $type '/d' $value '/f' | Out-Null
+            $arguments = @('add', $path, '/ve', '/t', $type, '/d', $value, '/f')
         }
+        Invoke-NativeCommand -FilePath 'reg.exe' -Arguments $arguments -Quiet
         Write-Log "Set registry: $path\$name = $value"
     } catch {
         Write-Log "Error setting registry $path\$name : $_" "ERROR"
@@ -686,7 +1301,7 @@ function Remove-RegistryValue {
     $keyPath = $path.Substring(0, $lastSlash)
     $valueName = $path.Substring($lastSlash + 1)
     try {
-        & 'reg' 'delete' $keyPath '/v' $valueName '/f' 2>&1 | Out-Null
+        Invoke-NativeCommand -FilePath 'reg.exe' -Arguments @('delete', $keyPath, '/v', $valueName, '/f') -Quiet
         Write-Log "Removed registry value: $path"
     } catch {
         Write-Log "Registry value not found or error: $path" "WARN"
@@ -745,20 +1360,26 @@ function Apply-RegistryTweaks {
     Set-RegistryValue 'HKLM\zSOFTWARE\Policies\Microsoft\Windows\CloudContent' 'DisableConsumerAccountStateContent' 'REG_DWORD' '1'
     Set-RegistryValue 'HKLM\zSOFTWARE\Policies\Microsoft\Windows\CloudContent' 'DisableCloudOptimizedContent' 'REG_DWORD' '1'
 
-    # Enable local accounts on OOBE
+    # Out-of-the-box offline local account.
+    # BypassNRO re-enables the "I don't have internet" path Microsoft removed from
+    # the OOBE UI in 24H2+, and DisableOnline stops OOBE demanding a network
+    # connection before it will continue. These are belt-and-braces - the real
+    # guarantee is the pre-created local account in autounattend.xml.
     Set-RegistryValue 'HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\OOBE' 'BypassNRO' 'REG_DWORD' '1'
+    Set-RegistryValue 'HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\OOBE' 'DisableOnline' 'REG_DWORD' '1'
 
-    # Copy autounattend.xml if exists
-    if (Test-Path "$PSScriptRoot\autounattend.xml") {
-        Copy-Item -Path "$PSScriptRoot\autounattend.xml" -Destination "$scratchDir\Windows\System32\Sysprep\autounattend.xml" -Force
-        Write-Log "Copied autounattend.xml"
-    }
+    # Bake the answer file into the image too, so a later sysprep /generalize keeps
+    # the same OOBE behaviour.
+    Write-IsoAnswerFile -Destination "$scratchDir\Windows\System32\Sysprep\autounattend.xml" -AccountMode $AccountSetup -ImageIndex 1
 
     # Disable reserved storage
     Set-RegistryValue 'HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\ReserveManager' 'ShippedWithReserves' 'REG_DWORD' '0'
 
-    # Disable BitLocker
+    # Disable BitLocker and automatic device encryption
     Set-RegistryValue 'HKLM\zSYSTEM\ControlSet001\Control\BitLocker' 'PreventDeviceEncryption' 'REG_DWORD' '1'
+    Set-RegistryValue 'HKLM\zSYSTEM\ControlSet001\Control\BitlockerStatus' 'BootStatus' 'REG_DWORD' '0'
+    Set-RegistryValue 'HKLM\zSYSTEM\ControlSet001\Services\BDESVC' 'Start' 'REG_DWORD' '4'
+    Set-RegistryValue 'HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\BitLocker' 'IsBdeDriverPresent' 'REG_DWORD' '0'
 
     # Disable Chat icon
     Set-RegistryValue 'HKLM\zSOFTWARE\Policies\Microsoft\Windows\Windows Chat' 'ChatIcon' 'REG_DWORD' '3'
@@ -789,20 +1410,25 @@ function Apply-RegistryTweaks {
     Set-RegistryValue 'HKLM\zSOFTWARE\Policies\Microsoft\Windows\CloudContent' 'DisableConsumerAccountStateContent' 'REG_DWORD' '1'
     Set-RegistryValue 'HKLM\zSOFTWARE\Policies\Microsoft\Windows\CloudContent' 'DisableCloudOptimizedContent' 'REG_DWORD' '1'
 
-    # Enable local accounts on OOBE
+    # Out-of-the-box offline local account.
+    # BypassNRO re-enables the "I don't have internet" path Microsoft removed from
+    # the OOBE UI in 24H2+, and DisableOnline stops OOBE demanding a network
+    # connection before it will continue. These are belt-and-braces - the real
+    # guarantee is the pre-created local account in autounattend.xml.
     Set-RegistryValue 'HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\OOBE' 'BypassNRO' 'REG_DWORD' '1'
+    Set-RegistryValue 'HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\OOBE' 'DisableOnline' 'REG_DWORD' '1'
 
-    # Copy autounattend.xml if exists
-    if (Test-Path "$PSScriptRoot\autounattend.xml") {
-        Copy-Item -Path "$PSScriptRoot\autounattend.xml" -Destination "$scratchDir\Windows\System32\Sysprep\autounattend.xml" -Force
-        Write-Log "Copied autounattend.xml"
-    }
+    # Bake the answer file into the image too, so a later sysprep /generalize keeps
+    # the same OOBE behaviour.
 
     # Disable reserved storage
     Set-RegistryValue 'HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\ReserveManager' 'ShippedWithReserves' 'REG_DWORD' '0'
 
-    # Disable BitLocker
+    # Disable BitLocker and automatic device encryption
     Set-RegistryValue 'HKLM\zSYSTEM\ControlSet001\Control\BitLocker' 'PreventDeviceEncryption' 'REG_DWORD' '1'
+    Set-RegistryValue 'HKLM\zSYSTEM\ControlSet001\Control\BitlockerStatus' 'BootStatus' 'REG_DWORD' '0'
+    Set-RegistryValue 'HKLM\zSYSTEM\ControlSet001\Services\BDESVC' 'Start' 'REG_DWORD' '4'
+    Set-RegistryValue 'HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\BitLocker' 'IsBdeDriverPresent' 'REG_DWORD' '0'
 
     # Disable Chat icon
     Set-RegistryValue 'HKLM\zSOFTWARE\Policies\Microsoft\Windows\Windows Chat' 'ChatIcon' 'REG_DWORD' '3'
@@ -898,8 +1524,16 @@ function Apply-RegistryTweaks {
         Write-Log "PreserveWinRE set; leaving the OS WinRE configuration enabled." "INFO"
     }
 
-    # Hide settings pages
-    Set-RegistryValue 'HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer' 'SettingsPageVisibility' 'REG_SZ' 'hide:virus;windowsupdate'
+    # Hide both Settings pages. This is the ONLY write site for
+    # SettingsPageVisibility in this script: a Core-Gaming build inherits it
+    # rather than writing its own copy, so the shipped value cannot depend on
+    # the order the two code paths happen to run in.
+    #
+    # Page ids are the ms-settings URI minus the 'ms-settings:' prefix. The
+    # Windows Security page is 'windowsdefender'. The value here used to read
+    # 'hide:virus;windowsupdate' - 'virus' is not a Windows 11 page id at all,
+    # so it hid nothing.
+    Set-RegistryValue 'HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer' 'SettingsPageVisibility' 'REG_SZ' 'hide:windowsupdate;windowsdefender'
 
     # Easter Egg / Branding
     Write-Log "Adding Easter Egg branding..."
@@ -971,13 +1605,13 @@ function Remove-NonEssentialServices {
 
 function Apply-PerformanceTweaks {
     # Prior automation credit: kelexine
-    # Bakes performance optimizations into the offline image via registry.
-    # Covers: Memory, CPU/Scheduler, Storage (NTFS), Network (TCP), Gaming, Boot time.
-    # Profile: Aggressive — gaming and VM workloads; requires ≥4 GB RAM.
-    Write-Log "Applying performance optimizations (gaming/VM profile)..."
+    # Applies legacy experimental Core/VM registry values. Effects and safety depend
+    # on the Windows build and hardware; these settings are not performance-tested.
+    Write-Log "Applying configured Core/VM registry settings (experimental profile)..."
 
     # ── Memory Management ──────────────────────────────────────────────────
-    # Keep kernel-mode drivers in physical RAM — eliminates paging latency spikes during gaming
+    # Requests pageable kernel code remain resident; this can increase RAM use and
+    # has no benchmark-validated latency benefit in this project.
     Set-RegistryValue 'HKLM\zSYSTEM\ControlSet001\Control\Session Manager\Memory Management' 'DisablePagingExecutive'  'REG_DWORD' '1'
     Set-RegistryValue 'HKLM\zSYSTEM\ControlSet001\Control\Session Manager\Memory Management' 'LargeSystemCache'        'REG_DWORD' '0'
     Set-RegistryValue 'HKLM\zSYSTEM\ControlSet001\Control\Session Manager\Memory Management' 'ClearPageFileAtShutdown' 'REG_DWORD' '0'
@@ -985,14 +1619,16 @@ function Apply-PerformanceTweaks {
     Set-RegistryValue 'HKLM\zSYSTEM\ControlSet001\Control\Session Manager\Memory Management\PrefetchParameters' 'EnableSuperfetch' 'REG_DWORD' '0'
 
     # ── CPU / Thread Scheduler ─────────────────────────────────────────────
-    # 38 (0x26): foreground boost ON + variable short quanta — gaming sweet spot
+    # Legacy scheduler value from the Core profile; workload effects are unverified.
     Set-RegistryValue 'HKLM\zSYSTEM\ControlSet001\Control\PriorityControl' 'Win32PrioritySeparation' 'REG_DWORD' '38'
 
     # ── MMCSS (Multimedia Class Scheduler) ────────────────────────────────
     Set-RegistryValue 'HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile' 'NetworkThrottlingIndex' 'REG_DWORD' '0xffffffff'
-    # 0 = dedicate maximum CPU to foreground/game; no background CPU reservation
+    # Legacy MMCSS value from the Core profile; Windows-version and workload effects
+    # are not benchmarked here.
     Set-RegistryValue 'HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile' 'SystemResponsiveness'   'REG_DWORD' '0'
-    # MMCSS Games class — maximum GPU and CPU priority for game threads
+    # MMCSS Games task values are configured below; actual scheduler treatment is
+    # controlled by Windows and is not verified by this static build.
     Set-RegistryValue 'HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games' 'GPU Priority'        'REG_DWORD' '8'
     Set-RegistryValue 'HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games' 'Priority'            'REG_DWORD' '6'
     Set-RegistryValue 'HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games' 'Scheduling Category' 'REG_SZ'    'High'
@@ -1029,37 +1665,50 @@ function Apply-PerformanceTweaks {
     # ── Boot Time ─────────────────────────────────────────────────────────
     Set-RegistryValue 'HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Serialize' 'StartupDelayInMSec' 'REG_DWORD' '0'
     Set-RegistryValue 'HKLM\zSYSTEM\ControlSet001\Control\Session Manager' 'AutoChkTimeOut' 'REG_DWORD' '0'
-    # Fast Startup OFF for gaming/VM — HiberBoot conflicts with clean VM power cycles and snapshot restore
+    # Fast Startup is disabled in this Core/VM profile; boot and hibernation behavior
+    # changes, but no startup-time improvement is claimed.
     Set-RegistryValue 'HKLM\zSYSTEM\ControlSet001\Control\Session Manager\Power' 'HiberbootEnabled' 'REG_DWORD' '0'
     # Keep crash dump on BSOD instead of silent auto-reboot — preserves minidump for analysis
     Set-RegistryValue 'HKLM\zSYSTEM\ControlSet001\Control\CrashControl' 'AutoReboot' 'REG_DWORD' '0'
-    # BCD: short boot menu + disable dynamic tick for lower timer interrupt latency (gaming)
+    # BCD values below are experimental configuration requests. Older builds set
+    # useplatformtick explicitly; clear that override rather than asserting a
+    # universal timer source or performance benefit. Platform behavior is untested.
     Set-RegistryValue 'HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce' 'PerfTuneBCD' 'REG_SZ' `
-        'powershell -WindowStyle Hidden -ExecutionPolicy Bypass -Command "& bcdedit /set timeout 5 2>&1 | Out-Null; & bcdedit /set disabledynamictick yes 2>&1 | Out-Null; & bcdedit /set useplatformtick yes 2>&1 | Out-Null"'
+        'powershell -WindowStyle Hidden -ExecutionPolicy Bypass -Command "& bcdedit /set timeout 5 2>&1 | Out-Null; & bcdedit /set disabledynamictick yes 2>&1 | Out-Null; & bcdedit /deletevalue useplatformtick 2>&1 | Out-Null"'
 
-    Write-Log "Performance optimizations applied (gaming/VM profile)"
+    Write-Log "Configured Core/VM registry settings written (experimental profile)"
 }
 
 function Unload-RegistryHives {
     Write-Log "Unloading registry hives..."
 
-    # Force garbage collection to release any handles
+    # Release managed handles before asking reg.exe to unload each hive.
     [GC]::Collect()
     [GC]::WaitForPendingFinalizers()
     Start-Sleep -Seconds 3
 
-    reg unload HKLM\zCOMPONENTS 2>&1 | Out-Null
-    reg unload HKLM\zDEFAULT 2>&1 | Out-Null
-    reg unload HKLM\zNTUSER 2>&1 | Out-Null
-    reg unload HKLM\zSOFTWARE 2>&1 | Out-Null
-    reg unload HKLM\zSYSTEM 2>&1 | Out-Null
+    $failures = @()
+    foreach ($hive in @($script:LoadedRegistryHives)) {
+        try {
+            Invoke-NativeCommand -FilePath 'reg.exe' -Arguments @('unload', $hive) -Quiet
+            $script:LoadedRegistryHives = @($script:LoadedRegistryHives | Where-Object { $_ -ne $hive })
+        } catch {
+            $failures += "${hive}: $_"
+            Write-Log "Failed to unload registry hive $hive : $_" "ERROR"
+        }
+    }
 
+    if ($failures.Count -gt 0) {
+        throw "One or more offline registry hives could not be unloaded: $($failures -join '; ')"
+    }
     Write-Log "Registry hives unloaded"
 }
 
 function Optimize-WindowsImage {
     Write-Log "Cleaning up Windows image (this may take 10-15 minutes)..."
-    & dism.exe /Image:$scratchDir /Cleanup-Image /StartComponentCleanup /ResetBase | Out-Null
+    Invoke-NativeCommand -FilePath 'dism.exe' -Arguments @(
+        "/Image:$scratchDir", '/Cleanup-Image', '/StartComponentCleanup', '/ResetBase'
+    ) -Quiet
     Write-Log "Image cleanup complete"
 }
 
@@ -1072,6 +1721,14 @@ function Dismount-AndExport {
     & Dism.exe /Export-Image /SourceImageFile:$wimFilePath /SourceIndex:$INDEX `
         /DestinationImageFile:$tempWim /Compress:max | Out-Null
 
+    # Never delete the source image if the export above failed. A failed export that
+    # still deletes install.wim leaves the ISO with no install image at all, and
+    # Windows Setup reports that as "A media driver your computer needs is missing"
+    # - which looks like a USB or driver fault and hides the real cause.
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path $tempWim)) {
+        throw "DISM /Export-Image failed (exit code $LASTEXITCODE). Refusing to delete $wimFilePath."
+    }
+
     Remove-Item -Path $wimFilePath -Force
     Rename-Item -Path $tempWim -NewName "install.wim"
 
@@ -1083,20 +1740,20 @@ function Process-BootImage {
 
     $bootWimPath = "$tiny11Dir\sources\boot.wim"
 
-    # Take ownership
-    & takeown /F $bootWimPath /A | Out-Null
-    & icacls $bootWimPath /grant "$($adminGroup.Value):(F)" | Out-Null
+    # Take ownership and set permissions before mounting the boot image.
+    Invoke-NativeCommand -FilePath 'takeown.exe' -Arguments @('/F', $bootWimPath, '/A') -Quiet
+    Invoke-NativeCommand -FilePath 'icacls.exe' -Arguments @($bootWimPath, '/grant', "$($adminGroup.Value):(F)") -Quiet
     Set-ItemProperty -Path $bootWimPath -Name IsReadOnly -Value $false -ErrorAction SilentlyContinue
 
     Write-Log "Mounting boot.wim (Index 2)..."
     Mount-WindowsImage -ImagePath $bootWimPath -Index 2 -Path $scratchDir
 
     # Load registry and apply tweaks
-    reg load HKLM\zCOMPONENTS "$scratchDir\Windows\System32\config\COMPONENTS" | Out-Null
-    reg load HKLM\zDEFAULT "$scratchDir\Windows\System32\config\default" | Out-Null
-    reg load HKLM\zNTUSER "$scratchDir\Users\Default\ntuser.dat" | Out-Null
-    reg load HKLM\zSOFTWARE "$scratchDir\Windows\System32\config\SOFTWARE" | Out-Null
-    reg load HKLM\zSYSTEM "$scratchDir\Windows\System32\config\SYSTEM" | Out-Null
+    Load-RegistryHive 'HKLM\zCOMPONENTS' "$scratchDir\Windows\System32\config\COMPONENTS"
+    Load-RegistryHive 'HKLM\zDEFAULT' "$scratchDir\Windows\System32\config\default"
+    Load-RegistryHive 'HKLM\zNTUSER' "$scratchDir\Users\Default\ntuser.dat"
+    Load-RegistryHive 'HKLM\zSOFTWARE' "$scratchDir\Windows\System32\config\SOFTWARE"
+    Load-RegistryHive 'HKLM\zSYSTEM' "$scratchDir\Windows\System32\config\SYSTEM"
 
     Write-Log "Applying VM/Lab recovery settings to the boot image. Hardware-check bypass=$([bool]$BypassHardwareRequirements)."
     if ($BypassHardwareRequirements) {
@@ -1121,7 +1778,9 @@ function Process-BootImage {
         Write-Log "PreserveWinRE set; leaving Setup recovery settings unchanged." "INFO"
     }
     Set-RegistryValue 'HKLM\zSYSTEM\ControlSet001\Control\BitLocker' 'PreventDeviceEncryption' 'REG_DWORD' '1'
-    Set-RegistryValue 'HKLM\zSYSTEM\Setup' 'CmdLine' 'REG_SZ' 'X:\sources\setup.exe'
+    # Keep Microsoft's stock WinPE Setup command line. Rewriting HKLM\SYSTEM\Setup\CmdLine
+    # can prevent third-party boot managers such as Ventoy from mounting the ISO.
+    # The stock boot.wim already launches Setup; no override is needed.
 
     # If winre.wim was removed from the OS image, patch ReAgent.xml in boot.wim as well
     # so SetupHost does not attempt to stage SafeOS from Install.esd during WinPE setup (bypasses error 0x80070003 at 11%)
@@ -1130,12 +1789,8 @@ function Process-BootImage {
         Patch-ReAgentXml
     }
 
-    # Unload registry
-    reg unload HKLM\zCOMPONENTS | Out-Null
-    reg unload HKLM\zDEFAULT | Out-Null
-    reg unload HKLM\zNTUSER | Out-Null
-    reg unload HKLM\zSOFTWARE | Out-Null
-    reg unload HKLM\zSYSTEM | Out-Null
+    # Unload the boot-image registry hives before saving the mount.
+    Unload-RegistryHives
 
     Write-Log "Dismounting boot.wim..."
     Dismount-WindowsImage -Path $scratchDir -Save
@@ -1149,6 +1804,12 @@ function Convert-ToESD {
     $esdPath = "$tiny11Dir\sources\install.esd"
     & dism /Export-Image /SourceImageFile:$wimFilePath /SourceIndex:1 /DestinationImageFile:$esdPath /Compress:recovery
 
+    # Same guard as Dismount-AndExport: never delete the source WIM unless the ESD
+    # export actually succeeded.
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path $esdPath)) {
+        throw "DISM /Export-Image to install.esd failed (exit code $LASTEXITCODE). Refusing to delete $wimFilePath."
+    }
+
     # Remove the WIM file
     Remove-Item $wimFilePath -Force
 
@@ -1158,10 +1819,36 @@ function Convert-ToESD {
 function Create-TinyISO {
     Write-Log "Creating ISO image..."
 
-    # Copy autounattend.xml to ISO root for OOBE bypass
-    if (Test-Path "$PSScriptRoot\autounattend.xml") {
-        Copy-Item -Path "$PSScriptRoot\autounattend.xml" -Destination "$tiny11Dir\autounattend.xml" -Force
-        Write-Log "Copied autounattend.xml to ISO root"
+    # The answer file at the ISO root is the one Windows Setup auto-detects when
+    # booting the media. Write-IsoAnswerFile also pins the edition index into it.
+    Write-IsoAnswerFile -Destination "$tiny11Dir\autounattend.xml" -AccountMode $AccountSetup -ImageIndex 1
+
+    # Guard: an ISO with no usable install image produces exactly the symptom
+    # "A media driver your computer needs is missing" when Setup looks for its media,
+    # which is easy to misread as a USB or driver fault. Fail the build here rather
+    # than shipping it.
+    $installImages = @("$tiny11Dir\sources\install.wim", "$tiny11Dir\sources\install.esd") |
+        Where-Object { Test-Path $_ }
+
+    if (-not $installImages) {
+        throw "No install.wim or install.esd in $tiny11Dir\sources - the image export step failed. Refusing to build an ISO that Setup cannot install from."
+    }
+
+    foreach ($img in $installImages) {
+        $imgMB = [math]::Round((Get-Item $img).Length / 1MB, 1)
+        Write-Log "Install image $([System.IO.Path]::GetFileName($img)): ${imgMB}MB"
+        if ($imgMB -lt 500) {
+            throw "Install image $img is only ${imgMB}MB - it looks truncated. Refusing to build the ISO."
+        }
+    }
+
+    # A leftover export would confuse Setup's media detection.
+    foreach ($stray in @('install2.wim', 'install2.esd')) {
+        $strayPath = Join-Path "$tiny11Dir\sources" $stray
+        if (Test-Path $strayPath) {
+            Write-Log "Removing leftover $stray from sources\" "WARN"
+            Remove-Item -Path $strayPath -Force -ErrorAction SilentlyContinue
+        }
     }
 
     # Verify boot files exist before creating ISO
@@ -1191,17 +1878,32 @@ function Create-TinyISO {
 
         if (-not (Test-Path $localOSCDIMGPath)) {
             Invoke-WebRequest -Uri $url -OutFile $localOSCDIMGPath -UseBasicParsing
+            $script:DownloadedOscdimg = $true
             Write-Log "Downloaded oscdimg.exe"
         }
 
         $OSCDIMG = $localOSCDIMGPath
     }
 
-    # Build the ISO
+    # ---- ISO container --------------------------------------------------------
+    # -u2        ISO9660 + Joliet + UDF, the layout Microsoft's own retail media
+    #            uses. ISO9660 alone cannot hold a >4 GB file, so the UDF layer is
+    #            what carries install.wim.
+    # -udfver150 UDF 1.50 rather than 1.02. UDF 1.02 cannot describe a single file
+    #            larger than 4 GB and a Standard install.wim can exceed that. This
+    #            is a robustness fix only - it is NOT what made Ventoy fail. See
+    #            "Booting a Tiny11 ISO from Ventoy" in README.md for that.
+    # Build the ISO and check the native exit code. Removing a previous artifact
+    # first prevents a failed oscdimg invocation from being mistaken for success.
     Write-Log "Building bootable ISO (this may take 5-10 minutes)..."
-    & $OSCDIMG '-m' '-o' '-u2' '-udfver102' `
-        "-bootdata:2#p0,e,b$tiny11Dir\boot\etfsboot.com#pEF,e,b$tiny11Dir\efi\microsoft\boot\efisys.bin" `
-        $tiny11Dir $outputISO | Out-Null
+    if (Test-Path -LiteralPath $outputISO) {
+        Remove-Item -LiteralPath $outputISO -Force
+    }
+    Invoke-NativeCommand -FilePath $OSCDIMG -Arguments @(
+        '-m', '-o', '-u2', '-udfver150',
+        "-bootdata:2#p0,e,b$tiny11Dir\boot\etfsboot.com#pEF,e,b$tiny11Dir\efi\microsoft\boot\efisys.bin",
+        $tiny11Dir, $outputISO
+    ) -Quiet
 
     if (Test-Path $outputISO) {
         $isoSize = [math]::Round((Get-Item $outputISO).Length / 1GB, 2)
@@ -1220,11 +1922,13 @@ function Write-BuildInfo {
     try {
         $buildInfo = @{
             profile       = 'VM/LabCore'
+            account_setup = $AccountSetup
             hardware_requirement_bypass = [bool]$BypassHardwareRequirements
             windows_build = $script:DetectedBuildNumber
             full_version  = $script:DetectedFullVersion
             image_name    = $script:DetectedImageName
             source_index  = $script:SourceImageIndex
+            working_index = $INDEX
             edition       = $script:DetectedEdition
             final_image_index = 1
             generated_at  = (Get-Date -Format 'o')
@@ -1248,9 +1952,11 @@ function Invoke-Cleanup {
     Remove-Item -Path $tiny11Dir -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item -Path $scratchDir -Recurse -Force -ErrorAction SilentlyContinue
 
-    # Remove downloaded files
-    Remove-Item -Path "$PSScriptRoot\oscdimg.exe" -Force -ErrorAction SilentlyContinue
-    Remove-Item -Path "$PSScriptRoot\autounattend.xml" -Force -ErrorAction SilentlyContinue
+    # Remove only the oscdimg copy this invocation downloaded. Never delete a
+    # caller-provided utility or answer-file configuration during cleanup.
+    if ($script:DownloadedOscdimg) {
+        Remove-Item -LiteralPath "$PSScriptRoot\oscdimg.exe" -Force -ErrorAction SilentlyContinue
+    }
 
     # Verify cleanup
     $remainingItems = @()
@@ -1264,13 +1970,42 @@ function Invoke-Cleanup {
     }
 }
 
+
 #---------[ Main Execution ]---------
 try {
     Write-Log "=== Tiny11 Core Headless Builder Started ===" "INFO"
     Write-Log "Maintainer: NggKhaiz; automation credit: kelexine; original builder: ntdevlabs"
     Write-Log "Profile: VM/LabCore (experimental; not a primary OS); Edition=$Edition; hardware bypass=$([bool]$BypassHardwareRequirements)"
-    Write-Log "Parameters: ISO=$ISO, INDEX=$INDEX (0 means auto-select by edition), SCRATCH=$ScratchDisk"
+    Write-Log "Parameters: ISO=$ISO, INDEX=$INDEX (0 means auto-select by edition), SCRATCH=$ScratchDisk, AccountSetup=$AccountSetup, RemoveDefender=$RemoveDefender"
+    if ($GamingProfile) { Write-Log "Gaming profile: ENABLED (HagsMode=$HagsMode)" }
     Write-Log "WARNING: This creates a minimal Windows 11 Core image - NOT for daily use!"
+
+    if ($GamingProfile) {
+        Initialize-GamingModule -LogFile $logFile -ProfileDirectory $gamingConfigDir
+        $gamingProfileData = Import-GamingProfile -Path $GamingProfileFile
+        $gamingGroupFlags = Resolve-GamingGroups -Profile $gamingProfileData -Overrides $GamingGroups
+
+        $onGroups = @()
+        $offGroups = @()
+        foreach ($name in ($gamingGroupFlags.Keys | Sort-Object)) {
+            if ($gamingGroupFlags[$name]) { $onGroups += $name } else { $offGroups += $name }
+        }
+        Write-Log "Gaming groups ON : $($onGroups -join ', ')"
+        if ($offGroups.Count -gt 0) {
+            Write-Log "Gaming groups OFF: $($offGroups -join ', ')"
+        } else {
+            Write-Log "Gaming groups OFF: (none)"
+        }
+
+        # Essentials pass. The workflow validates this file before it downloads the
+        # ISO; the builder re-validates because it is the authority and may be run
+        # directly. Either way a bad edit fails here, not 40 minutes into DISM.
+        # There is no toggle: this always runs on a Core-Gaming build.
+        Initialize-EssentialsModule -LogFile $logFile -ProfileDirectory $gamingConfigDir
+        $essentialsConfig = Join-Path $gamingConfigDir 'essentials_profile.json'
+        $essentialsProfileData = Import-EssentialsProfile -Path $essentialsConfig
+        Write-Log "Essentials pass: ENABLED (always on for Core-Gaming, $(@($essentialsProfileData.registry).Count) registry value(s), $(@($essentialsProfileData.services).Count) service(s))"
+    }
 
     Test-Prerequisites
     Initialize-Directories
@@ -1296,6 +2031,29 @@ try {
     Remove-BloatwareApps
     Remove-SystemPackages
 
+    # Gaming profile: image-level removals. These run while the image hives are still
+    # unloaded, because DISM package/feature operations must not race with a mounted hive.
+    if ($GamingProfile) {
+        Invoke-GamingAppxRemoval            -Profile $gamingProfileData -Groups $gamingGroupFlags -ScratchDir $scratchDir
+        Invoke-GamingSystemPackageRemoval   -Profile $gamingProfileData -Groups $gamingGroupFlags -ScratchDir $scratchDir
+        Invoke-GamingOptionalFeatureRemoval -Profile $gamingProfileData -Groups $gamingGroupFlags -ScratchDir $scratchDir
+    }
+
+    # Defender / Security removal. Opt-in via -RemoveDefender on a plain Core
+    # build; a Core-Gaming build always gets it. This is destructive and is not a
+    # supported substitute for antivirus on a daily-use Windows installation.
+    # The payload half runs here, while the image hives are still unloaded; the
+    # registry half runs later, right after Load-RegistryHives.
+    if ($RemoveDefender -or $GamingProfile) {
+        Remove-DefenderPayload
+    }
+
+    # Gaming profile: complete Windows Update removal. Payload half, so it runs
+    # while the hives are still unloaded.
+    if ($GamingProfile) {
+        Remove-WindowsUpdatePayload
+    }
+
     # .NET 3.5 installation (optional, Core-only)
     if ($ENABLE_DOTNET35) {
         Write-Log "Enabling .NET 3.5..." "INFO"
@@ -1310,6 +2068,7 @@ try {
     }
 
     Remove-EdgeAndOneDrive
+    Remove-BitLockerComponents
     if ($PreserveWinRE) {
         Write-Log "Skipping WinRE removal (PreserveWinRE flag set)" "INFO"
     } else {
@@ -1318,13 +2077,74 @@ try {
 
     Load-RegistryHives
     Apply-RegistryTweaks
+    if ($RemoveDefender -or $GamingProfile) {
+        Remove-DefenderRegistry
+    }
+
+    # Essentials pass, registry half. Deliberately placed between the Core registry
+    # pass and the performance/gaming passes: performance settings outrank privacy and
+    # cosmetic defaults, so anything that ever collides is resolved in that direction.
+    if ($GamingProfile -and $essentialsProfileData) {
+        Invoke-EssentialsRegistryTweaks -Profile $essentialsProfileData
+    }
+
+    # Gaming profile: complete Windows Update removal. Registry half. Runs after
+    # Apply-RegistryTweaks so it wins over the always-on Core WU policies.
+    if ($GamingProfile) {
+        Remove-WindowsUpdateStack
+    }
+
     Apply-PerformanceTweaks
+
+    # Gaming profile must run AFTER Apply-PerformanceTweaks so it can deliberately
+    # override the Core defaults (Game Mode on -> off, SystemResponsiveness 0 -> 10).
+    if ($GamingProfile) {
+        Invoke-GamingRegistryTweaks -Profile $gamingProfileData -Groups $gamingGroupFlags
+        Set-GamingHagsMode -Profile $gamingProfileData -HagsMode $HagsMode
+    }
+
     Remove-ScheduledTasks
     Remove-NonEssentialServices
+
+    if ($GamingProfile -and $essentialsProfileData) {
+        Invoke-EssentialsServiceTweaks -Profile $essentialsProfileData
+    }
+
+    if ($GamingProfile) {
+        Invoke-GamingServiceTweaks -Profile $gamingProfileData -Groups $gamingGroupFlags
+    }
+
     Unload-RegistryHives
 
     # WinSxS optimization (CORE-specific)
     Optimize-WinSxS
+
+    # Gaming profile: stage the first-boot payload into the mounted image. This MUST
+    # happen before Dismount-AndExport so the files land inside install.wim.
+    # Only install.wim is touched - never boot.wim, which Ventoy inspects and patches.
+    if ($GamingProfile) {
+        New-GamingFirstBootPayload -Profile $gamingProfileData -Groups $gamingGroupFlags `
+            -ScratchDir $scratchDir -ScriptRoot $PSScriptRoot -HagsMode $HagsMode
+
+        # Essentials: stage its data next to the gaming payload, write the audit
+        # manifest, and add the report script. gaming-firstboot.ps1 picks the JSON up
+        # from the same directory and runs the first-boot half of the layer.
+        if ($essentialsProfileData) {
+            $gamingPayloadDir = Join-Path $scratchDir 'Windows\Tiny11Gaming'
+            Copy-Item -LiteralPath (Join-Path $gamingConfigDir 'essentials_profile.json') `
+                -Destination (Join-Path $gamingPayloadDir 'essentials_profile.json') -Force
+            New-EssentialsManifest -Profile $essentialsProfileData `
+                -Destination (Join-Path $gamingPayloadDir 'ESSENTIALS_PROFILE.md')
+
+            $reportSource = Join-Path $PSScriptRoot 'Tiny11-Report.ps1'
+            if (Test-Path -LiteralPath $reportSource) {
+                Copy-Item -LiteralPath $reportSource -Destination (Join-Path $gamingPayloadDir 'Tiny11-Report.ps1') -Force
+            } else {
+                Write-Log "Report script missing at $reportSource" "WARN"
+            }
+            Write-Log "Essentials payload staged into Windows\Tiny11Gaming"
+        }
+    }
 
     # Finalization phase
     Optimize-WindowsImage
@@ -1336,6 +2156,12 @@ try {
 
     Create-TinyISO
     Write-BuildInfo -OutputPath "$PSScriptRoot\tiny11core-buildinfo.json"
+
+    if ($GamingProfile) {
+        Write-GamingBuildInfo -Profile $gamingProfileData -Groups $gamingGroupFlags `
+            -OutputPath "$PSScriptRoot\tiny11core-gaming-buildinfo.json" `
+            -HagsMode $HagsMode -WindowsBuild $script:DetectedBuildNumber
+    }
 
     # Cleanup
     Invoke-Cleanup

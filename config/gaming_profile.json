@@ -1,0 +1,1012 @@
+{
+  "schemaVersion": "1.0.0",
+  "profile": "core-gaming",
+  "title": "Tiny11 Core-Gaming",
+  "description": "Experimental, AtlasOS-inspired settings for disposable VM/Lab gaming tests. This profile removes security, servicing and compatibility features; no FPS, latency, RAM or CPU improvement is claimed or benchmark-validated.",
+  "hivePrefixes": {
+    "SYSTEM": "HKLM\\zSYSTEM",
+    "SOFTWARE": "HKLM\\zSOFTWARE",
+    "DEFAULT": "HKLM\\zDEFAULT",
+    "NTUSER": "HKLM\\zNTUSER"
+  },
+  "defaultGroups": {
+    "atlas_power_scheme": true,
+    "disable_cpu_idle": true,
+    "disable_security_mitigations": true,
+    "remove_xbox_gaming_stack": true,
+    "strip_background_noise": true,
+    "instant_windows": true,
+    "disable_fast_startup": true,
+    "network_latency_tweaks": true,
+    "disable_mpo": true,
+    "latency_input_tweaks": true,
+    "interrupt_latency": true,
+    "disable_fso": true,
+    "disable_game_mode": true,
+    "disable_printing": true
+  },
+  "groupDescriptions": {
+    "atlas_power_scheme": "Custom AtlasOS-style power scheme, imported and activated at first boot.",
+    "disable_cpu_idle": "Request CPU C-State 0 and performance-favoring power-plan values. Raises idle power/temperature; hardware behavior varies and no performance gain is guaranteed.",
+    "disable_security_mitigations": "Turn off VBS, HVCI, Credential Guard, System Guard and Spectre/Meltdown mitigations.",
+    "remove_xbox_gaming_stack": "Remove Xbox Live / Gaming Services stack and Xbox AppX packages.",
+    "strip_background_noise": "Disable Windows Search indexing, Bluetooth, Delivery Optimization, background apps, visual effects and scripted diagnostics, and turn off memory compression on machines with 16 GB or more.",
+    "instant_windows": "Change selected window/menu/hover and application-shutdown settings. Slow applications may be terminated before saving; no responsiveness gain is guaranteed.",
+    "disable_fast_startup": "Disable hibernation and Fast Startup (Hiberboot).",
+    "network_latency_tweaks": "Change selected TCP, QoS, Delivery Optimization and Windows Update restart settings; no latency or throughput improvement is guaranteed.",
+    "disable_mpo": "Request Multi-Plane Overlay off as a driver-specific troubleshooting experiment; it may help, do nothing, or regress display behavior.",
+    "latency_input_tweaks": "Change mouse, accessibility, USB and windowed-presentation settings. Effects and compatibility vary by hardware and application; no latency improvement is guaranteed.",
+    "interrupt_latency": "Apply per-device MSI/priority, NIC and USB/HID settings at first boot. Changes are hardware-specific, unbenchmarked and may cause driver or network regressions.",
+    "disable_fso": "Request Fullscreen Optimizations off; test game and display-driver compatibility.",
+    "disable_game_mode": "Disable Windows Game Mode. Scheduling and compatibility effects vary by game; no performance result is claimed.",
+    "disable_printing": "Disable print spooler services and remove the printing optional features."
+  },
+  "registry": [
+    {
+      "group": "disable_game_mode",
+      "hive": "NTUSER",
+      "path": "SOFTWARE\\Microsoft\\GameBar",
+      "name": "AllowAutoGameMode",
+      "type": "REG_DWORD",
+      "value": "0",
+      "note": "Disables the Windows Game Mode toggle when this group is enabled. The effect on any game or overlapping background setting is unverified."
+    },
+    {
+      "group": "disable_game_mode",
+      "hive": "NTUSER",
+      "path": "SOFTWARE\\Microsoft\\GameBar",
+      "name": "AutoGameModeEnabled",
+      "type": "REG_DWORD",
+      "value": "0"
+    },
+    {
+      "group": "disable_game_mode",
+      "hive": "NTUSER",
+      "path": "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\GameDVR",
+      "name": "AppCaptureEnabled",
+      "type": "REG_DWORD",
+      "value": "0"
+    },
+    {
+      "group": "disable_game_mode",
+      "hive": "SOFTWARE",
+      "path": "Policies\\Microsoft\\Windows\\GameDVR",
+      "name": "AllowGameDVR",
+      "type": "REG_DWORD",
+      "value": "0"
+    },
+    {
+      "group": "disable_fso",
+      "hive": "NTUSER",
+      "path": "System\\GameConfigStore",
+      "name": "GameDVR_FSEBehavior",
+      "type": "REG_DWORD",
+      "value": "2",
+      "note": "Requests the configured Fullscreen Optimizations behavior; support and presentation behavior vary by Windows build, game and driver."
+    },
+    {
+      "group": "disable_fso",
+      "hive": "NTUSER",
+      "path": "System\\GameConfigStore",
+      "name": "GameDVR_FSEBehaviorMode",
+      "type": "REG_DWORD",
+      "value": "2"
+    },
+    {
+      "group": "disable_fso",
+      "hive": "NTUSER",
+      "path": "System\\GameConfigStore",
+      "name": "GameDVR_HonorUserFSEBehaviorMode",
+      "type": "REG_DWORD",
+      "value": "1"
+    },
+    {
+      "group": "disable_fso",
+      "hive": "NTUSER",
+      "path": "System\\GameConfigStore",
+      "name": "GameDVR_DXGIHonorFSEWindowsCompatible",
+      "type": "REG_DWORD",
+      "value": "1"
+    },
+    {
+      "group": "disable_fso",
+      "hive": "NTUSER",
+      "path": "System\\GameConfigStore",
+      "name": "GameDVR_EFSEBehaviorMode",
+      "type": "REG_DWORD",
+      "value": "0"
+    },
+    {
+      "group": "disable_security_mitigations",
+      "hive": "SYSTEM",
+      "path": "ControlSet001\\Control\\DeviceGuard",
+      "name": "EnableVirtualizationBasedSecurity",
+      "type": "REG_DWORD",
+      "value": "0",
+      "note": "Disables a Windows security mitigation when this group is enabled. Security risk is concrete; game-performance effects vary and are not benchmarked here."
+    },
+    {
+      "group": "disable_security_mitigations",
+      "hive": "SYSTEM",
+      "path": "ControlSet001\\Control\\DeviceGuard",
+      "name": "RequirePlatformSecurityFeatures",
+      "type": "REG_DWORD",
+      "value": "0"
+    },
+    {
+      "group": "disable_security_mitigations",
+      "hive": "SYSTEM",
+      "path": "ControlSet001\\Control\\DeviceGuard\\Scenarios\\HypervisorEnforcedCodeIntegrity",
+      "name": "Enabled",
+      "type": "REG_DWORD",
+      "value": "0",
+      "note": "Memory Integrity / HVCI."
+    },
+    {
+      "group": "disable_security_mitigations",
+      "hive": "SYSTEM",
+      "path": "ControlSet001\\Control\\DeviceGuard\\Scenarios\\CredentialGuard",
+      "name": "Enabled",
+      "type": "REG_DWORD",
+      "value": "0"
+    },
+    {
+      "group": "disable_security_mitigations",
+      "hive": "SYSTEM",
+      "path": "ControlSet001\\Control\\DeviceGuard\\Scenarios\\SystemGuard",
+      "name": "Enabled",
+      "type": "REG_DWORD",
+      "value": "0"
+    },
+    {
+      "group": "disable_security_mitigations",
+      "hive": "SOFTWARE",
+      "path": "Policies\\Microsoft\\Windows\\DeviceGuard",
+      "name": "EnableVirtualizationBasedSecurity",
+      "type": "REG_DWORD",
+      "value": "0"
+    },
+    {
+      "group": "disable_security_mitigations",
+      "hive": "SOFTWARE",
+      "path": "Policies\\Microsoft\\Windows\\DeviceGuard",
+      "name": "LsaCfgFlags",
+      "type": "REG_DWORD",
+      "value": "0"
+    },
+    {
+      "group": "disable_security_mitigations",
+      "hive": "SOFTWARE",
+      "path": "Policies\\Microsoft\\Windows\\DeviceGuard",
+      "name": "HypervisorEnforcedCodeIntegrity",
+      "type": "REG_DWORD",
+      "value": "0"
+    },
+    {
+      "group": "disable_security_mitigations",
+      "hive": "SYSTEM",
+      "path": "ControlSet001\\Control\\Session Manager\\Memory Management",
+      "name": "FeatureSettingsOverride",
+      "type": "REG_DWORD",
+      "value": "3",
+      "note": "3 = disable Spectre/Meltdown kernel mitigations."
+    },
+    {
+      "group": "disable_security_mitigations",
+      "hive": "SYSTEM",
+      "path": "ControlSet001\\Control\\Session Manager\\Memory Management",
+      "name": "FeatureSettingsOverrideMask",
+      "type": "REG_DWORD",
+      "value": "3"
+    },
+    {
+      "group": "atlas_power_scheme",
+      "hive": "SYSTEM",
+      "path": "ControlSet001\\Control\\Power\\PowerThrottling",
+      "name": "PowerThrottlingOff",
+      "type": "REG_DWORD",
+      "value": "1"
+    },
+    {
+      "group": "atlas_power_scheme",
+      "hive": "SYSTEM",
+      "path": "ControlSet001\\Control\\Power",
+      "name": "HibernateEnabled",
+      "type": "REG_DWORD",
+      "value": "0"
+    },
+    {
+      "group": "atlas_power_scheme",
+      "hive": "SYSTEM",
+      "path": "ControlSet001\\Control\\Power",
+      "name": "HibernateEnabledDefault",
+      "type": "REG_DWORD",
+      "value": "0"
+    },
+    {
+      "group": "atlas_power_scheme",
+      "hive": "SOFTWARE",
+      "path": "Microsoft\\Windows NT\\CurrentVersion\\Multimedia\\SystemProfile",
+      "name": "SystemResponsiveness",
+      "type": "REG_DWORD",
+      "value": "10",
+      "note": "Sets the configured MMCSS value. Its effect on a particular workload is not benchmarked."
+    },
+    {
+      "group": "disable_fast_startup",
+      "hive": "SYSTEM",
+      "path": "ControlSet001\\Control\\Session Manager\\Power",
+      "name": "HiberbootEnabled",
+      "type": "REG_DWORD",
+      "value": "0"
+    },
+    {
+      "group": "disable_mpo",
+      "hive": "SOFTWARE",
+      "path": "Microsoft\\Windows\\Dwm",
+      "name": "OverlayTestMode",
+      "type": "REG_DWORD",
+      "value": "5",
+      "note": "Requests Multi-Plane Overlay off as a display-troubleshooting experiment; this may help, do nothing, or cause regressions on a given driver."
+    },
+    {
+      "group": "latency_input_tweaks",
+      "hive": "NTUSER",
+      "path": "Control Panel\\Mouse",
+      "name": "MouseSpeed",
+      "type": "REG_SZ",
+      "value": "0",
+      "note": "Changes the Windows pointer-acceleration setting. Games using raw input may handle mouse input separately; no input-latency result is claimed."
+    },
+    {
+      "group": "latency_input_tweaks",
+      "hive": "NTUSER",
+      "path": "Control Panel\\Mouse",
+      "name": "MouseThreshold1",
+      "type": "REG_SZ",
+      "value": "0"
+    },
+    {
+      "group": "latency_input_tweaks",
+      "hive": "NTUSER",
+      "path": "Control Panel\\Mouse",
+      "name": "MouseThreshold2",
+      "type": "REG_SZ",
+      "value": "0"
+    },
+    {
+      "group": "latency_input_tweaks",
+      "hive": "NTUSER",
+      "path": "Control Panel\\Accessibility\\StickyKeys",
+      "name": "Flags",
+      "type": "REG_SZ",
+      "value": "506",
+      "note": "Disables the Sticky Keys shortcut prompt."
+    },
+    {
+      "group": "latency_input_tweaks",
+      "hive": "NTUSER",
+      "path": "Control Panel\\Accessibility\\Keyboard Response",
+      "name": "Flags",
+      "type": "REG_SZ",
+      "value": "122",
+      "note": "Disables the Sticky Keys shortcut prompt."
+    },
+    {
+      "group": "latency_input_tweaks",
+      "hive": "NTUSER",
+      "path": "Control Panel\\Accessibility\\ToggleKeys",
+      "name": "Flags",
+      "type": "REG_SZ",
+      "value": "58",
+      "note": "Disables the Sticky Keys shortcut prompt."
+    },
+    {
+      "group": "latency_input_tweaks",
+      "hive": "NTUSER",
+      "path": "Software\\Microsoft\\DirectX\\UserGpuPreferences",
+      "name": "DirectXUserGlobalSettings",
+      "type": "REG_SZ",
+      "value": "SwapEffectUpgradeEnable=1;VRROptimizeEnable=1",
+      "note": "Requests DXGI flip-model and VRR-related windowed-presentation settings. Actual behavior depends on Windows, GPU, driver, display and application; no frame-pacing benefit is guaranteed."
+    },
+    {
+      "group": "network_latency_tweaks",
+      "hive": "SYSTEM",
+      "path": "ControlSet001\\Services\\Tcpip\\Parameters",
+      "name": "TcpAckFrequency",
+      "type": "REG_DWORD",
+      "value": "1",
+      "note": "Global default. Per-adapter values are applied at first boot."
+    },
+    {
+      "group": "network_latency_tweaks",
+      "hive": "SYSTEM",
+      "path": "ControlSet001\\Services\\Tcpip\\Parameters",
+      "name": "TCPNoDelay",
+      "type": "REG_DWORD",
+      "value": "1",
+      "note": "Disables Nagle's algorithm."
+    },
+    {
+      "group": "network_latency_tweaks",
+      "hive": "SYSTEM",
+      "path": "ControlSet001\\Services\\Tcpip\\Parameters",
+      "name": "TCPDelAckTicks",
+      "type": "REG_DWORD",
+      "value": "0"
+    },
+    {
+      "group": "network_latency_tweaks",
+      "hive": "SYSTEM",
+      "path": "ControlSet001\\Services\\Tcpip\\Parameters",
+      "name": "TcpMaxDataRetransmissions",
+      "type": "REG_DWORD",
+      "value": "5"
+    },
+    {
+      "group": "network_latency_tweaks",
+      "hive": "SOFTWARE",
+      "path": "Policies\\Microsoft\\Windows\\Psched",
+      "name": "NonBestEffortLimit",
+      "type": "REG_DWORD",
+      "value": "0",
+      "note": "Sets the configured QoS policy value to zero. This is not a guaranteed bandwidth reservation or throughput increase."
+    },
+    {
+      "group": "network_latency_tweaks",
+      "hive": "SOFTWARE",
+      "path": "Policies\\Microsoft\\Windows\\DeliveryOptimization",
+      "name": "DODownloadMode",
+      "type": "REG_DWORD",
+      "value": "0",
+      "note": "Changes the Delivery Optimization download mode; no game-latency benefit is claimed."
+    },
+    {
+      "group": "network_latency_tweaks",
+      "hive": "SOFTWARE",
+      "path": "Policies\\Microsoft\\Windows\\WindowsUpdate\\AU",
+      "name": "NoAutoRebootWithLoggedOnUsers",
+      "type": "REG_DWORD",
+      "value": "1",
+      "note": "Requests that Windows Update avoid automatically restarting while a user is logged on; behavior depends on Windows policy and update state."
+    },
+    {
+      "group": "strip_background_noise",
+      "hive": "NTUSER",
+      "path": "Software\\Microsoft\\Windows\\CurrentVersion\\BackgroundAccessApplications",
+      "name": "GlobalUserDisabled",
+      "type": "REG_DWORD",
+      "value": "1"
+    },
+    {
+      "group": "strip_background_noise",
+      "hive": "SOFTWARE",
+      "path": "Policies\\Microsoft\\Windows\\AppPrivacy",
+      "name": "LetAppsRunInBackground",
+      "type": "REG_DWORD",
+      "value": "2",
+      "note": "2 = force deny."
+    },
+    {
+      "group": "strip_background_noise",
+      "hive": "NTUSER",
+      "path": "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\VisualEffects",
+      "name": "VisualFXSetting",
+      "type": "REG_DWORD",
+      "value": "2",
+      "note": "2 selects Windows' Adjust for best performance visual-effects preset; the label is a Windows setting, not a measured performance result."
+    },
+    {
+      "group": "strip_background_noise",
+      "hive": "SOFTWARE",
+      "path": "Policies\\Microsoft\\Windows\\ScriptedDiagnostics",
+      "name": "EnableDiagnostics",
+      "type": "REG_DWORD",
+      "value": "0",
+      "note": "Changes the scripted-diagnostics policy. This can affect troubleshooting; no performance benefit is claimed."
+    },
+    {
+      "group": "strip_background_noise",
+      "hive": "SOFTWARE",
+      "path": "Policies\\Microsoft\\Windows\\WDI",
+      "name": "ScenarioExecutionEnabled",
+      "type": "REG_DWORD",
+      "value": "0"
+    },
+    {
+      "group": "instant_windows",
+      "hive": "NTUSER",
+      "path": "Control Panel\\Desktop\\WindowMetrics",
+      "name": "MinAnimate",
+      "type": "REG_SZ",
+      "value": "0",
+      "note": "Sets a separate minimize/maximize animation value; no speed improvement is claimed."
+    },
+    {
+      "group": "instant_windows",
+      "hive": "NTUSER",
+      "path": "Control Panel\\Desktop",
+      "name": "MenuShowDelay",
+      "type": "REG_SZ",
+      "value": "0",
+      "note": "Changes the configured delay before menus appear; no performance result is claimed."
+    },
+    {
+      "group": "instant_windows",
+      "hive": "NTUSER",
+      "path": "Control Panel\\Desktop",
+      "name": "AutoEndTasks",
+      "type": "REG_SZ",
+      "value": "1",
+      "note": "Requests automatic termination of tasks at shutdown; a slow or hung app may lose unsaved work."
+    },
+    {
+      "group": "instant_windows",
+      "hive": "NTUSER",
+      "path": "Control Panel\\Desktop",
+      "name": "HungAppTimeout",
+      "type": "REG_SZ",
+      "value": "1000",
+      "note": "Default 5000 ms. How long a window is allowed to hang before Windows considers it unresponsive."
+    },
+    {
+      "group": "instant_windows",
+      "hive": "NTUSER",
+      "path": "Control Panel\\Desktop",
+      "name": "WaitToKillAppTimeout",
+      "type": "REG_SZ",
+      "value": "2000",
+      "note": "Default 20000 ms; this shortens the wait for an application to exit. Combined with AutoEndTasks it may lose unsaved work in a slow or hung app."
+    },
+    {
+      "group": "instant_windows",
+      "hive": "NTUSER",
+      "path": "Control Panel\\Mouse",
+      "name": "MouseHoverTime",
+      "type": "REG_SZ",
+      "value": "0",
+      "note": "Default 400 ms hover delay."
+    },
+    {
+      "group": "instant_windows",
+      "hive": "NTUSER",
+      "path": "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+      "name": "TaskbarAnimations",
+      "type": "REG_DWORD",
+      "value": "0"
+    },
+    {
+      "group": "instant_windows",
+      "hive": "NTUSER",
+      "path": "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+      "name": "ListviewAlphaSelect",
+      "type": "REG_DWORD",
+      "value": "0",
+      "note": "Removes the selection fade in Explorer."
+    },
+    {
+      "group": "instant_windows",
+      "hive": "NTUSER",
+      "path": "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+      "name": "ListviewShadow",
+      "type": "REG_DWORD",
+      "value": "0",
+      "note": "Removes the drop shadow behind icon labels."
+    },
+    {
+      "group": "instant_windows",
+      "hive": "NTUSER",
+      "path": "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+      "name": "ExtendedUIHoverTime",
+      "type": "REG_DWORD",
+      "value": "0",
+      "note": "Default 400 ms taskbar thumbnail hover delay."
+    },
+    {
+      "group": "instant_windows",
+      "hive": "NTUSER",
+      "path": "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+      "name": "ThumbnailLivePreviewHoverTime",
+      "type": "REG_DWORD",
+      "value": "0",
+      "note": "Default 400 ms live-preview hover delay."
+    },
+    {
+      "group": "instant_windows",
+      "hive": "NTUSER",
+      "path": "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+      "name": "DisallowShaking",
+      "type": "REG_DWORD",
+      "value": "1",
+      "note": "Disables Aero Shake (shaking a window minimizes everything else)."
+    },
+    {
+      "group": "instant_windows",
+      "hive": "NTUSER",
+      "path": "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+      "name": "Start_TrackProgs",
+      "type": "REG_DWORD",
+      "value": "0",
+      "note": "Stop the shell maintaining a most-used-programs list on every launch."
+    },
+    {
+      "group": "instant_windows",
+      "hive": "NTUSER",
+      "path": "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+      "name": "Start_TrackDocs",
+      "type": "REG_DWORD",
+      "value": "0",
+      "note": "Stop the shell maintaining a recent-documents list."
+    },
+    {
+      "group": "instant_windows",
+      "hive": "NTUSER",
+      "path": "Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+      "name": "EnableTransparency",
+      "type": "REG_DWORD",
+      "value": "0",
+      "note": "Disables the Windows transparency visual effect. Appearance changes; no rendering-performance result is claimed."
+    },
+    {
+      "group": "instant_windows",
+      "hive": "NTUSER",
+      "path": "Software\\Microsoft\\Windows\\Dwm",
+      "name": "EnableAeroPeek",
+      "type": "REG_DWORD",
+      "value": "0"
+    },
+    {
+      "group": "instant_windows",
+      "hive": "SYSTEM",
+      "path": "ControlSet001\\Control",
+      "name": "WaitToKillServiceTimeout",
+      "type": "REG_SZ",
+      "value": "2000",
+      "note": "Default 5000 ms in this reference profile; this value changes a service-shutdown timeout and may affect shutdown behavior."
+    }
+  ],
+  "services": [
+    {
+      "group": "remove_xbox_gaming_stack",
+      "name": "XblAuthManager",
+      "start": 4,
+      "note": "Xbox Live Auth Manager"
+    },
+    {
+      "group": "remove_xbox_gaming_stack",
+      "name": "XblGameSave",
+      "start": 4,
+      "note": "Xbox Live Game Save"
+    },
+    {
+      "group": "remove_xbox_gaming_stack",
+      "name": "XboxNetApiSvc",
+      "start": 4,
+      "note": "Xbox Live Networking Service"
+    },
+    {
+      "group": "remove_xbox_gaming_stack",
+      "name": "XboxGipSvc",
+      "start": 4,
+      "note": "Xbox Accessory Management"
+    },
+    {
+      "group": "remove_xbox_gaming_stack",
+      "name": "GamingServices",
+      "start": 4,
+      "note": "Gaming Services"
+    },
+    {
+      "group": "remove_xbox_gaming_stack",
+      "name": "GamingServicesNet",
+      "start": 4,
+      "note": "Gaming Services Network"
+    },
+    {
+      "group": "strip_background_noise",
+      "name": "WSearch",
+      "start": 4,
+      "note": "Windows Search indexing"
+    },
+    {
+      "group": "strip_background_noise",
+      "name": "bthserv",
+      "start": 4,
+      "note": "Bluetooth Support Service"
+    },
+    {
+      "group": "strip_background_noise",
+      "name": "BTAGService",
+      "start": 4,
+      "note": "Bluetooth Audio Gateway"
+    },
+    {
+      "group": "strip_background_noise",
+      "name": "BluetoothUserService",
+      "start": 4,
+      "note": "Bluetooth User Support"
+    },
+    {
+      "group": "strip_background_noise",
+      "name": "BthAvctpSvc",
+      "start": 4,
+      "note": "Bluetooth AVCTP"
+    },
+    {
+      "group": "strip_background_noise",
+      "name": "Dosvc",
+      "start": 4,
+      "note": "Delivery Optimization"
+    },
+    {
+      "group": "disable_printing",
+      "name": "Spooler",
+      "start": 4,
+      "note": "Print Spooler"
+    },
+    {
+      "group": "disable_printing",
+      "name": "PrintNotify",
+      "start": 4,
+      "note": "Printer Extensions and Notifications"
+    },
+    {
+      "group": "disable_printing",
+      "name": "Fax",
+      "start": 4,
+      "note": "Fax"
+    },
+    {
+      "group": "disable_printing",
+      "name": "PrintWorkflowUserSvc",
+      "start": 4,
+      "note": "Print Workflow"
+    },
+    {
+      "group": "disable_printing",
+      "name": "PrintScanBrokerService",
+      "start": 4,
+      "note": "Print / Scan Broker"
+    }
+  ],
+  "appxPrefixes": [
+    {
+      "group": "remove_xbox_gaming_stack",
+      "prefix": "Microsoft.XboxIdentityProvider_"
+    },
+    {
+      "group": "remove_xbox_gaming_stack",
+      "prefix": "Microsoft.GamingServices_"
+    },
+    {
+      "group": "remove_xbox_gaming_stack",
+      "prefix": "Microsoft.XboxApp_"
+    },
+    {
+      "group": "remove_xbox_gaming_stack",
+      "prefix": "Microsoft.XboxGameCallableUI_"
+    },
+    {
+      "group": "remove_xbox_gaming_stack",
+      "prefix": "Microsoft.XboxGamingOverlay_"
+    },
+    {
+      "group": "remove_xbox_gaming_stack",
+      "prefix": "Microsoft.XboxGameOverlay_"
+    },
+    {
+      "group": "remove_xbox_gaming_stack",
+      "prefix": "Microsoft.XboxSpeechToTextOverlay_"
+    },
+    {
+      "group": "remove_xbox_gaming_stack",
+      "prefix": "Microsoft.Xbox.TCUI_"
+    },
+    {
+      "group": "remove_xbox_gaming_stack",
+      "prefix": "Microsoft.GamingApp_"
+    }
+  ],
+  "systemPackages": [
+    {
+      "group": "disable_printing",
+      "pattern": "Microsoft-Windows-Printing-Foundation-Features-Package~"
+    },
+    {
+      "group": "disable_printing",
+      "pattern": "Microsoft-Windows-Printing-Foundation-InternetPrinting-Client-Package~"
+    },
+    {
+      "group": "disable_printing",
+      "pattern": "Microsoft-Windows-Printing-Foundation-LPDPrintService-Package~"
+    },
+    {
+      "group": "disable_printing",
+      "pattern": "Microsoft-Windows-Printing-Foundation-LPRPortMonitor-Package~"
+    },
+    {
+      "group": "disable_printing",
+      "pattern": "Microsoft-Windows-Printing-XPSServices-Package~"
+    },
+    {
+      "group": "disable_printing",
+      "pattern": "Microsoft-Windows-Printing-PMCPPC-FoD-Package~"
+    },
+    {
+      "group": "disable_printing",
+      "pattern": "Microsoft-Windows-Fax-Service-Package~"
+    }
+  ],
+  "optionalFeatures": [
+    {
+      "group": "disable_printing",
+      "name": "Printing-Foundation-Features"
+    },
+    {
+      "group": "disable_printing",
+      "name": "Printing-Foundation-InternetPrinting-Client"
+    },
+    {
+      "group": "disable_printing",
+      "name": "Printing-Foundation-LPDPrintService"
+    },
+    {
+      "group": "disable_printing",
+      "name": "Printing-Foundation-LPRPortMonitor"
+    },
+    {
+      "group": "disable_printing",
+      "name": "Printing-XPSServices-Features"
+    },
+    {
+      "group": "disable_printing",
+      "name": "FaxServicesClientPackage"
+    }
+  ],
+  "revert": {
+    "reversible": [
+      {
+        "hive": "NTUSER",
+        "path": "SOFTWARE\\Microsoft\\GameBar",
+        "name": "AllowAutoGameMode",
+        "type": "REG_DWORD",
+        "value": "1"
+      },
+      {
+        "hive": "NTUSER",
+        "path": "SOFTWARE\\Microsoft\\GameBar",
+        "name": "AutoGameModeEnabled",
+        "type": "REG_DWORD",
+        "value": "1"
+      },
+      {
+        "hive": "NTUSER",
+        "path": "System\\GameConfigStore",
+        "name": "GameDVR_FSEBehavior",
+        "type": "REG_DWORD",
+        "value": "0"
+      },
+      {
+        "hive": "SYSTEM",
+        "path": "ControlSet001\\Control\\DeviceGuard",
+        "name": "EnableVirtualizationBasedSecurity",
+        "type": "REG_DWORD",
+        "value": "1"
+      },
+      {
+        "hive": "SYSTEM",
+        "path": "ControlSet001\\Control\\DeviceGuard\\Scenarios\\HypervisorEnforcedCodeIntegrity",
+        "name": "Enabled",
+        "type": "REG_DWORD",
+        "value": "1"
+      },
+      {
+        "hive": "SYSTEM",
+        "path": "ControlSet001\\Control\\Session Manager\\Memory Management",
+        "name": "FeatureSettingsOverride",
+        "type": "REG_DWORD",
+        "value": "0"
+      },
+      {
+        "hive": "SYSTEM",
+        "path": "ControlSet001\\Control\\Session Manager\\Memory Management",
+        "name": "FeatureSettingsOverrideMask",
+        "type": "REG_DWORD",
+        "value": "0"
+      },
+      {
+        "hive": "SYSTEM",
+        "path": "ControlSet001\\Control\\Session Manager\\Power",
+        "name": "HiberbootEnabled",
+        "type": "REG_DWORD",
+        "value": "1"
+      },
+      {
+        "hive": "SYSTEM",
+        "path": "ControlSet001\\Control\\Power",
+        "name": "HibernateEnabled",
+        "type": "REG_DWORD",
+        "value": "1"
+      },
+      {
+        "hive": "NTUSER",
+        "path": "Control Panel\\Mouse",
+        "name": "MouseSpeed",
+        "type": "REG_SZ",
+        "value": "1"
+      },
+      {
+        "hive": "NTUSER",
+        "path": "Software\\Microsoft\\Windows\\CurrentVersion\\BackgroundAccessApplications",
+        "name": "GlobalUserDisabled",
+        "type": "REG_DWORD",
+        "value": "0"
+      },
+      {
+        "hive": "NTUSER",
+        "path": "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\VisualEffects",
+        "name": "VisualFXSetting",
+        "type": "REG_DWORD",
+        "value": "0"
+      },
+      {
+        "hive": "NTUSER",
+        "path": "Control Panel\\Desktop\\WindowMetrics",
+        "name": "MinAnimate",
+        "type": "REG_SZ",
+        "value": "1"
+      },
+      {
+        "hive": "NTUSER",
+        "path": "Control Panel\\Desktop",
+        "name": "MenuShowDelay",
+        "type": "REG_SZ",
+        "value": "400"
+      },
+      {
+        "hive": "NTUSER",
+        "path": "Control Panel\\Desktop",
+        "name": "AutoEndTasks",
+        "type": "REG_SZ",
+        "value": "0"
+      },
+      {
+        "hive": "NTUSER",
+        "path": "Control Panel\\Desktop",
+        "name": "HungAppTimeout",
+        "type": "REG_SZ",
+        "value": "5000"
+      },
+      {
+        "hive": "NTUSER",
+        "path": "Control Panel\\Desktop",
+        "name": "WaitToKillAppTimeout",
+        "type": "REG_SZ",
+        "value": "20000"
+      },
+      {
+        "hive": "NTUSER",
+        "path": "Control Panel\\Mouse",
+        "name": "MouseHoverTime",
+        "type": "REG_SZ",
+        "value": "400"
+      },
+      {
+        "hive": "NTUSER",
+        "path": "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+        "name": "TaskbarAnimations",
+        "type": "REG_DWORD",
+        "value": "1"
+      },
+      {
+        "hive": "NTUSER",
+        "path": "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+        "name": "ListviewAlphaSelect",
+        "type": "REG_DWORD",
+        "value": "1"
+      },
+      {
+        "hive": "NTUSER",
+        "path": "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+        "name": "ListviewShadow",
+        "type": "REG_DWORD",
+        "value": "1"
+      },
+      {
+        "hive": "NTUSER",
+        "path": "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+        "name": "ExtendedUIHoverTime",
+        "type": "REG_DWORD",
+        "value": "400"
+      },
+      {
+        "hive": "NTUSER",
+        "path": "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+        "name": "DisallowShaking",
+        "type": "REG_DWORD",
+        "value": "0"
+      },
+      {
+        "hive": "NTUSER",
+        "path": "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+        "name": "Start_TrackProgs",
+        "type": "REG_DWORD",
+        "value": "1"
+      },
+      {
+        "hive": "NTUSER",
+        "path": "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+        "name": "Start_TrackDocs",
+        "type": "REG_DWORD",
+        "value": "1"
+      },
+      {
+        "hive": "NTUSER",
+        "path": "Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+        "name": "EnableTransparency",
+        "type": "REG_DWORD",
+        "value": "1"
+      },
+      {
+        "hive": "NTUSER",
+        "path": "Software\\Microsoft\\Windows\\Dwm",
+        "name": "EnableAeroPeek",
+        "type": "REG_DWORD",
+        "value": "1"
+      },
+      {
+        "hive": "SYSTEM",
+        "path": "ControlSet001\\Control",
+        "name": "WaitToKillServiceTimeout",
+        "type": "REG_SZ",
+        "value": "5000"
+      },
+      {
+        "hive": "NTUSER",
+        "path": "Software\\Microsoft\\DirectX\\UserGpuPreferences",
+        "name": "DirectXUserGlobalSettings",
+        "type": "REG_SZ",
+        "value": "SwapEffectUpgradeEnable=0;VRROptimizeEnable=1",
+        "note": "Restores the configured DirectX user preference value; this does not establish that it is the Windows default or improve frame pacing."
+      }
+    ],
+    "serviceRestore": [
+      {
+        "name": "WSearch",
+        "start": 2
+      },
+      {
+        "name": "bthserv",
+        "start": 3
+      },
+      {
+        "name": "BTAGService",
+        "start": 3
+      },
+      {
+        "name": "Dosvc",
+        "start": 2
+      },
+      {
+        "name": "Spooler",
+        "start": 2
+      },
+      {
+        "name": "XblAuthManager",
+        "start": 3
+      },
+      {
+        "name": "XboxNetApiSvc",
+        "start": 3
+      }
+    ],
+    "irreversible": [
+      "Windows Defender / Security - fully removed from every Core-Gaming image. Reinstall Windows or use the Standard variant to restore it.",
+      "Printing optional features - the printing payload is removed from the image. Re-adding requires servicing packages.",
+      "Xbox AppX packages - reinstallable from the Microsoft Store, but the Store itself is also removed on Core.",
+      "Boot configuration (bcdedit) - hypervisorlaunchtype and mitigation flags are applied at first boot and must be changed with bcdedit.",
+      "Device latency settings (interrupt_latency) - MSI mode, interrupt priority and NIC advanced properties are written per device on the live machine and are not restored by the revert script. They may cause device-specific instability; the support registry key is not a guarantee. Review each setting and use Device Manager / Set-NetAdapterAdvancedProperty to restore vendor defaults."
+    ]
+  }
+}

@@ -93,7 +93,7 @@ def test_preserve_winre_keeps_setup_and_os_recovery_enabled(relative_path):
     registry_end = script.index("\nfunction Apply-PerformanceTweaks {", registry_start)
     registry_function = script[registry_start:registry_end]
     registry_guard = registry_function[
-        registry_function.index("if (-not $PreserveWinRE) {"):registry_function.index("# Hide settings pages")
+        registry_function.index("if (-not $PreserveWinRE) {"):registry_function.index("# Hide both Settings pages")
     ]
     assert "'WinREEnabled' 'REG_DWORD' '0'" in registry_guard
     assert "preservewinre set; leaving the os winre configuration enabled." in registry_function.casefold()
@@ -122,3 +122,11 @@ def test_build_config_has_editor_schema_and_safe_standard_defaults():
     assert schema["properties"]["image_edition"]["default"] == "Pro"
     assert schema["properties"]["image_index"]["default"] == 0
     assert schema["properties"]["skip_cleanup"]["default"] is False
+
+
+def test_ci_runs_every_pester_test_not_only_the_metadata_helper():
+    workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+
+    assert "Invoke-Pester -Path tests -Output Detailed" in workflow
+    assert "Invoke-Pester -Path tests/Test-BuildNumberParsing.Tests.ps1" not in workflow
+    assert "python tests/validate_workflow.py" in workflow

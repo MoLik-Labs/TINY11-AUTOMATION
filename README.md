@@ -18,6 +18,7 @@ Local builds use an ISO that **you** supply. The standard Microsoft workflow res
 | --- | --- | --- | --- |
 | **Standard / SafeLite** | `scripts/tiny11maker-headless.ps1` | Daily use, real hardware, including lower-spec PCs | Selective removal of optional provisioned apps. Preserves Defender, Windows Update, WinRE, Store, Edge/WebView2, drivers, printing, maintenance tasks, and Windows services. Hardware-check bypass is off by default. |
 | **VM / LabCore** | `scripts/tiny11coremaker-headless.ps1` | Disposable or test VMs only | Aggressively trims components and may remove/disable servicing, recovery, security, printing, drivers, or other OS features. Do **not** use as a primary OS. |
+| **Core-Gaming** | [`Build Tiny11 Core-Gaming (VM/Lab)`](.github/workflows/build-tiny11-core-gaming.yml) / `-GamingProfile` | Disposable, isolated VM/lab only | Always removes Defender and Windows Update and may disable security mitigations, printing, Bluetooth, search, and other services. No performance benefit is claimed or benchmarked; see [`GAMING.md`](GAMING.md). |
 | **VM / LabNano** | `scripts/nano11builder-headless.ps1` | Extreme, manual-only experiments | More destructive than Core; printing and many drivers/apps are removed. VM testing only; not included in automatic profile dispatch. |
 
 The Standard profile deliberately keeps Windows defaults for CPU scheduling, networking, GPU/TDR, NTFS, services, and boot configuration instead of applying unverified “optimization” registry recipes. The source ISO's edition is selected by its **actual image name**, not by assuming that Pro is always index 6.
@@ -28,8 +29,8 @@ The Standard profile deliberately keeps Windows defaults for CPU scheduling, net
 - If that edition is not present or is named differently, the build stops and lists the available images. Use an explicit index only after inspecting that list.
 - Printing components and Print Spooler are preserved. Core/Nano are not safe substitutes for the Standard image if printing is required.
 - All three builders leave Windows hardware checks intact by default. `-BypassHardwareRequirements` is an explicit testing-only script switch; the Core/Nano manual workflows expose it with a default of `false`. The Standard workflow never enables bypasses.
-- Windows OOBE/account setup is left at Microsoft's defaults; Standard does not set `BypassNRO` or hide account screens.
-- `autounattend.xml` does **not** force Compact OS deployment for Standard. WIM/ESD compression affects installation-media size; it is not evidence of lower idle RAM or faster CPU performance. If you experiment with Compact OS, measure disk footprint and responsiveness separately.
+- The safe default is `account_setup: classic`: OOBE lets you create your own offline local account. The setup answer file exposes the local-account route; it disables Dynamic Update during Setup but does not disable Windows Update after installation. `auto-admin` is an explicit opt-in that creates a blank-password Admin account with one auto-logon; use only in a disposable, isolated VM.
+- Standard forces `<Compact>false</Compact>` in its generated answer file. WIM/ESD compression and Compact OS affect storage; neither proves idle RAM or CPU gains. Do not infer responsiveness gains—benchmark separately under identical conditions.
 - `-SkipCleanup` is off by default. Use it only when diagnosing a failed build.
 
 ## Build locally
@@ -60,11 +61,13 @@ Get-WindowsImage -ImagePath 'E:\sources\install.wim' |
 ```
 
 If the ISO contains `install.esd`, the builder exports the selected edition to a WIM before customization. The build metadata records the actual source image index/name and edition. Each output WIM contains only that selected image at final index 1, which is the index used by the installation answer file; the source index can differ between ISOs.
+Standard also forces Compact OS off; Core / Core-Gaming retain the experimental template setting unless changed in their builder.
 
 ## GitHub Actions and distribution
 
 - `Build Tiny11 Standard (SafeLite)` is the default choice for physical machines.
 - `Build Tiny11 Core (VM/Lab)` is experimental and intended for disposable VMs.
+- `Build Tiny11 Core-Gaming (VM/Lab)` is even more destructive and experimental. It is not a daily-use image; no benchmark-validated FPS, latency, RAM, or CPU benefit is claimed.
 - `Build Nano11 (Experimental VM/Lab)` is manual-only.
 - For manual dispatch, enter the actual Windows version for the artifact label. Each build fetches a fresh x64 ISO link from Microsoft inside the Windows runner, checks it against the requested release, masks the signed URL, and keeps it only in runner-local job state. The signed URL is not a workflow input or artifact. The edition is selected independently by image name unless you provide a verified source index.
 - Microsoft build workflows resolve only direct HTTPS ISO URLs from approved Microsoft download hosts. They produce a GitHub Actions artifact with **7-day retention** for testing. This is temporary CI storage, not long-term release hosting.

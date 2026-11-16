@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Headless script to build a trimmed-down Windows 11 image for CI/CD automation.
 
@@ -19,10 +19,17 @@
 .PARAMETER SkipCleanup
     Skip cleanup of temporary files after ISO creation (optional, for debugging)
 
+.PARAMETER AccountSetup
+    How the local account is set up on first boot (optional, default 'classic'):
+      classic    - default; run offline local-account OOBE so you create your own
+                   account with your chosen name. No pre-created blank-password admin.
+      auto-admin - explicitly opt in to a local 'Admin' with a blank password and
+                   one auto-logon. Use only in disposable, isolated lab VMs.
+
 .EXAMPLE
-    .\tiny11maker-headless.ps1 -ISO E
     .\tiny11maker-headless.ps1 -ISO E -INDEX 0 -Edition Pro
     .\tiny11maker-headless.ps1 -ISO E -INDEX 0 -Edition Home -SCRATCH D
+    .\tiny11maker-headless.ps1 -ISO E -INDEX 0 -Edition Pro -AccountSetup classic
 
 .NOTES
     Original Author: ntdevlabs
@@ -58,7 +65,11 @@ param (
     [string]$SCRATCH,
 
     [Parameter(Mandatory=$false, HelpMessage="Skip cleanup of temporary files")]
-    [switch]$SkipCleanup
+    [switch]$SkipCleanup,
+
+    [Parameter(Mandatory=$false, HelpMessage="Local account setup. 'classic' (default) runs offline OOBE so you create your own local account. 'auto-admin' explicitly creates a blank-password Admin account with one auto-logon; use only in a disposable isolated VM.")]
+    [ValidateSet('auto-admin', 'classic')]
+    [string]$AccountSetup = 'classic'
 )
 
 #---------[ Error Handling ]---------#
@@ -123,6 +134,99 @@ function Load-RegistryHive {
     Invoke-NativeCommand -FilePath 'reg.exe' -Arguments @('load', $HiveName, $HivePath) -Quiet
     if ($HiveName -notin $script:LoadedRegistryHives) {
         $script:LoadedRegistryHives += $HiveName
+    }
+}
+
+function Write-IsoAnswerFile {
+    # Copies the unattend template to $Destination, pinning /IMAGE/INDEX to the
+    # target media's final image index. The builder exports one selected image, so
+    # the generated ISO uses index 1 even when the source image had another index.
+    #
+    # The content is parsed as XML before it is written: Windows Setup hard-fails on
+    # a malformed answer file, and a rejected answer file is exactly how the OOBE /
+    # local-account automation silently stops working.
+    param(
+        [Parameter(Mandatory=$true)][string]$Destination,
+        [Parameter(Mandatory=$false)][string]$Template,
+        [Parameter(Mandatory=$false)]
+        [ValidateSet('auto-admin', 'classic')]
+        [string]$AccountMode = 'classic',
+        [Parameter(Mandatory=$false)]
+        [ValidateRange(1, 2147483647)]
+        [int]$ImageIndex = 1,
+        [Parameter(Mandatory=$false)]
+        [bool]$Compact = $false
+    )
+
+    if (-not $Template) {
+        $Template = @(
+            (Join-Path $PSScriptRoot "autounattend.xml"),
+            (Join-Path (Split-Path $PSScriptRoot -Parent) "autounattend.xml")
+        ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+    }
+
+    if (-not $Template -or -not (Test-Path $Template)) {
+        Write-Log "No unattend template found - OOBE will not be automated" "WARN"
+        return
+    }
+
+    try {
+        $content = Get-Content -LiteralPath $Template -Raw
+        $imageIndexPattern = '(<Key>/IMAGE/INDEX</Key>\s*<Value>)\d+(</Value>)'
+        if ([regex]::Matches($content, $imageIndexPattern).Count -ne 1) {
+            throw "Answer-file template must contain exactly one /IMAGE/INDEX placeholder."
+        }
+        $content = [regex]::Replace(
+            $content,
+            $imageIndexPattern,
+            ('${1}' + $ImageIndex + '${2}')
+        )
+
+        $compactText = $Compact.ToString().ToLowerInvariant()
+        $compactPattern = '(<Compact>\s*)(?:true|false)(\s*</Compact>)'
+        if ([regex]::Matches($content, $compactPattern).Count -ne 1) {
+            throw "Answer-file template must contain exactly one Compact element."
+        }
+        $content = [regex]::Replace(
+            $content,
+            $compactPattern,
+            ('${1}' + $compactText + '${2}')
+        )
+
+        # Account mode 'classic': drop the pre-created account, the auto-logon and
+        # the first-logon cleanup so Windows Setup runs OOBE and the person
+        # installing creates their own local account with their own name.
+        #
+        # Everything else in the template is kept, so the install stays fully
+        # offline: DynamicUpdate stays off, the online-account screens stay hidden
+        # and BypassNRO / DisableOnline stay set. The result is the classic
+        # "create a local account" OOBE with no Microsoft account and no network.
+        #
+        # These three elements never nest inside an element of the same name in
+        # the template, so a non-greedy block match is unambiguous. The result is
+        # re-parsed as XML below, so a bad edit here fails the build loudly.
+        if ($AccountMode -eq 'classic') {
+            $content = [regex]::Replace($content, '(?s)\s*<UserAccounts>.*?</UserAccounts>', '')
+            $content = [regex]::Replace($content, '(?s)\s*<AutoLogon>.*?</AutoLogon>', '')
+            $content = [regex]::Replace($content, '(?s)\s*<FirstLogonCommands>.*?</FirstLogonCommands>', '')
+        }
+
+        # Throws if the template is not well-formed XML - we want that to be loud.
+        $null = [xml]$content
+
+        $destDir = Split-Path -Parent $Destination
+        if (-not (Test-Path $destDir)) {
+            New-Item -ItemType Directory -Force -Path $destDir | Out-Null
+        }
+
+        # UTF-8 without BOM - Setup is happier without a BOM on the answer file.
+        $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+        [System.IO.File]::WriteAllText($Destination, $content, $utf8NoBom)
+
+        Write-Log "Wrote unattended answer file to $Destination (IMAGE/INDEX = $ImageIndex, account mode = $AccountMode, Compact = $compactText)"
+    } catch {
+        Write-Log "Failed to write answer file to ${Destination}: $_" "ERROR"
+        throw
     }
 }
 
@@ -449,16 +553,14 @@ function Apply-RegistryTweaks {
 
     Set-RegistryValue 'HKLM\zSOFTWARE\Policies\Microsoft\Windows\CloudContent' 'DisableConsumerAccountStateContent' 'REG_DWORD' '1'
     Set-RegistryValue 'HKLM\zSOFTWARE\Policies\Microsoft\Windows\CloudContent' 'DisableCloudOptimizedContent' 'REG_DWORD' '1'
+    # Support offline local-account setup during OOBE. These setup-time settings do not
+    # disable Windows Update after installation; the physical-machine profile keeps the
+    # update service and normal servicing components intact.
+    Set-RegistryValue 'HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\OOBE' 'BypassNRO' 'REG_DWORD' '1'
+    Set-RegistryValue 'HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\OOBE' 'DisableOnline' 'REG_DWORD' '1'
+    Write-IsoAnswerFile -Destination "$scratchDir\Windows\System32\Sysprep\autounattend.xml" -AccountMode $AccountSetup -ImageIndex 1 -Compact $false
 
-    # Leave Windows OOBE and account setup behavior at its default for stability.
-
-    # Copy autounattend.xml if exists
-    if (Test-Path "$PSScriptRoot\autounattend.xml") {
-        Copy-Item -Path "$PSScriptRoot\autounattend.xml" -Destination "$scratchDir\Windows\System32\Sysprep\autounattend.xml" -Force
-        Write-Log "Copied autounattend.xml"
-    }
-
-    # Keep reserved storage and device encryption defaults for reliable servicing and security.
+    # Keep reserved storage and device-encryption defaults for reliable servicing/security.
     # Disable Chat icon
     Set-RegistryValue 'HKLM\zSOFTWARE\Policies\Microsoft\Windows\Windows Chat' 'ChatIcon' 'REG_DWORD' '3'
     Set-RegistryValue 'HKLM\zNTUSER\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced' 'TaskbarMn' 'REG_DWORD' '0'
@@ -613,11 +715,30 @@ function Process-BootImage {
 
 function Create-TinyISO {
     Write-Log "Creating ISO image..."
+    # Windows Setup auto-detects the root answer file. Pin its image index to the
+    # single-image WIM produced by the export step (final index 1).
+    Write-IsoAnswerFile -Destination "$tiny11Dir\autounattend.xml" -AccountMode $AccountSetup -ImageIndex 1 -Compact $false
 
-    # Copy autounattend.xml to ISO root for OOBE bypass
-    if (Test-Path "$PSScriptRoot\autounattend.xml") {
-        Copy-Item -Path "$PSScriptRoot\autounattend.xml" -Destination "$tiny11Dir\autounattend.xml" -Force
-        Write-Log "Copied autounattend.xml to ISO root"
+    # Refuse to ship media with a missing/truncated install image. Such an ISO
+    # produces the misleading "A media driver ... is missing" Setup message.
+    $installImages = @("$tiny11Dir\sources\install.wim", "$tiny11Dir\sources\install.esd") |
+        Where-Object { Test-Path $_ }
+    if (-not $installImages) {
+        throw "No install.wim or install.esd in $tiny11Dir\sources; refusing to create an unusable ISO."
+    }
+    foreach ($img in $installImages) {
+        $imgMB = [math]::Round((Get-Item $img).Length / 1MB, 1)
+        Write-Log "Install image $([System.IO.Path]::GetFileName($img)): ${imgMB}MB"
+        if ($imgMB -lt 500) {
+            throw "Install image $img is only ${imgMB}MB; refusing to build a likely truncated ISO."
+        }
+    }
+    foreach ($stray in @('install2.wim', 'install2.esd')) {
+        $strayPath = Join-Path "$tiny11Dir\sources" $stray
+        if (Test-Path $strayPath) {
+            Write-Log "Removing leftover $stray from sources\" "WARN"
+            Remove-Item -LiteralPath $strayPath -Force
+        }
     }
 
     # Determine oscdimg.exe location
@@ -640,17 +761,16 @@ function Create-TinyISO {
 
         $OSCDIMG = $localOSCDIMGPath
     }
-
+    # UDF 1.50 supports a single file larger than 4 GB in install.wim.
     Write-Log "Building bootable ISO (this may take 5-10 minutes)..."
     if (Test-Path $outputISO) {
-        Remove-Item -Path $outputISO -Force
+        Remove-Item -LiteralPath $outputISO -Force
     }
     Invoke-NativeCommand -FilePath $OSCDIMG -Arguments @(
-        '-m', '-o', '-u2', '-udfver102',
+        '-m', '-o', '-u2', '-udfver150',
         "-bootdata:2#p0,e,b$tiny11Dir\boot\etfsboot.com#pEF,e,b$tiny11Dir\efi\microsoft\boot\efisys.bin",
         $tiny11Dir, $outputISO
     ) -Quiet
-
     if (Test-Path $outputISO) {
         $isoSize = [math]::Round((Get-Item $outputISO).Length / 1GB, 2)
         Write-Log "ISO created successfully: $outputISO (${isoSize}GB)"
@@ -668,6 +788,7 @@ function Write-BuildInfo {
     try {
         $buildInfo = @{
             profile       = 'Standard/SafeLite'
+            account_setup = $AccountSetup
             hardware_requirement_bypass = [bool]$BypassHardwareRequirements
             windows_build = $script:DetectedBuildNumber
             full_version  = $script:DetectedFullVersion
@@ -696,7 +817,11 @@ function Invoke-Cleanup {
     # Remove temporary directories
     Remove-Item -Path $tiny11Dir -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item -Path $scratchDir -Recurse -Force -ErrorAction SilentlyContinue
-    # Never delete caller/repository-provided unattended configuration during cleanup.
+    # Never delete caller-provided unattended configuration or a pre-existing
+    # oscdimg.exe. Clean up the executable only when this invocation downloaded it.
+    if ($script:DownloadedOscdimg) {
+        Remove-Item -LiteralPath "$PSScriptRoot\oscdimg.exe" -Force -ErrorAction SilentlyContinue
+    }
 
     # Verify cleanup
     $remainingItems = @()
@@ -715,8 +840,7 @@ try {
     Write-Log "=== Tiny11 Headless Builder Started ===" "INFO"
     Write-Log "Maintainer: NggKhaiz; automation credit: kelexine; original builder: ntdevlabs"
     Write-Log "Profile: Standard/SafeLite (physical machines); Edition=$Edition; hardware bypass=$([bool]$BypassHardwareRequirements)"
-    Write-Log "Parameters: ISO=$ISO, INDEX=$INDEX (0 means auto-select by edition), SCRATCH=$ScratchDisk"
-
+    Write-Log "Parameters: ISO=$ISO, INDEX=$INDEX (0 means auto-select by edition), SCRATCH=$ScratchDisk, AccountSetup=$AccountSetup"
     Test-Prerequisites
 
     Resolve-ImageIndex

@@ -50,6 +50,14 @@ on:
         required: false
         default: false
         type: boolean
+      account_setup:
+        description: 'Default classic: create your own offline local account in OOBE. auto-admin is an unsafe opt-in: blank-password Admin and one auto-logon; disposable isolated VMs only.'
+        type: choice
+        required: false
+        default: 'classic'
+        options:
+          - 'auto-admin'
+          - 'classic'
 
 env:
   ARIA2C_CONNECTIONS: '16'
@@ -92,6 +100,7 @@ jobs:
       BUILD_LANGUAGE_INPUT: ${{ inputs.language }}
       SKIP_CLEANUP: ${{ inputs.skip_cleanup }}
       EXPECTED_ISO_PATH: ${{ inputs.expected_iso_path }}
+      ACCOUNT_SETUP: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.account_setup || 'classic' }}
     
     steps:
       - name: Checkout repository
@@ -200,6 +209,7 @@ jobs:
             "Use explicit source index $env:REQUESTED_IMAGE_INDEX"
           }
           $cleanupPlan = if ($env:SKIP_CLEANUP -eq 'true') { 'Skipped (debug mode)' } else { 'Normal cleanup' }
+          $accountSetupPlan = if ([string]::IsNullOrWhiteSpace($env:ACCOUNT_SETUP)) { 'classic' } else { $env:ACCOUNT_SETUP }
           $plan = @"
           # 🛠️ Standard / SafeLite build plan
 
@@ -210,6 +220,7 @@ jobs:
           | Edition | $env:REQUESTED_EDITION |
           | Image selection | $imageSelection |
           | Language | $env:BUILD_LANGUAGE_INPUT |
+          | Account setup | $accountSetupPlan |
           | Cleanup | $cleanupPlan |
 
           The download URL is intentionally omitted from this summary. Custom-source URLs are stored in the tracked configuration file and may also remain in Git history.
@@ -226,6 +237,7 @@ jobs:
               version = "$env:WINDOWS_VERSION"
               build_type = "Standard"
               edition = "$env:EDITION_NAME"
+              account_setup = "$env:ACCOUNT_SETUP"
             } -Compress)
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_BUILDS }}
@@ -406,15 +418,22 @@ jobs:
             $params.SkipCleanup = $true
             Write-Output "Cleanup will be skipped (debugging mode)"
           }
+
+          # Only fall back to the default when nothing was supplied, so the
+          # builder's ValidateSet never receives an empty string.
+          $accountSetup = "$env:ACCOUNT_SETUP"
+          if ([string]::IsNullOrWhiteSpace($accountSetup)) { $accountSetup = 'classic' }
+          Write-Output "Account setup: $accountSetup"
           
           Write-Output "=== Starting Tiny11 Builder ==="
           Write-Output "ISO Drive: $($params.ISO)"
           Write-Output "Image Index: $($params.INDEX)"
+          Write-Output "Account setup: $accountSetup"
           Write-Output "Timestamp: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
           
           $startTime = Get-Date
           
-          .\scripts\tiny11maker-headless.ps1 @params
+          .\scripts\tiny11maker-headless.ps1 @params -AccountSetup $accountSetup
           
           $buildTime = (Get-Date) - $startTime
           Write-Output "Build completed in $($buildTime.TotalMinutes.ToString('F2')) minutes"
@@ -567,6 +586,7 @@ jobs:
               duration = $duration
               iso_size = $isoSize
               distribution = "Temporary GitHub Actions artifact (7-day retention); no permanent host configured"
+              account_setup = "$env:ACCOUNT_SETUP"
               windows_build = "$env:WINDOWS_BUILD_NUMBER"
             } -Compress)
         env:

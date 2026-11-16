@@ -258,6 +258,19 @@ class TestBuildExtraFields:
     def test_windows_build_none_ignored(self):
         assert _build_extra_fields({'windows_build': None}) is None
 
+    def test_classic_account_setup_is_surfaced(self):
+        fields = _build_extra_fields({'account_setup': 'classic'})
+        assert fields is not None
+        account = next(f for f in fields if f['name'] == 'Account setup')
+        assert account['value'] == 'Classic local-account OOBE'
+
+    def test_auto_admin_is_explicitly_warned_as_lab_only(self):
+        fields = _build_extra_fields({'account_setup': 'auto-admin'})
+        account = next(f for f in fields if f['name'] == 'Account setup')
+        assert 'Blank-password Admin' in account['value']
+        assert 'lab only' in account['value']
+        assert len(account['value']) <= 500
+
     def test_windows_build_alongside_other_fields(self):
         fields = _build_extra_fields({
             'windows_build': '26200.8655',

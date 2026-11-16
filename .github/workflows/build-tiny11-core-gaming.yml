@@ -1,0 +1,990 @@
+# GitHub Actions workflow for the experimental Tiny11 Core-Gaming VM/Lab profile.
+# Maintainer: NggKhaiz | automation credit: kelexine | original builder: ntdevlabs
+# Profile settings are explicit opt-ins/toggles; this VM/Lab workflow always removes
+# Defender and Windows Update. It uses Microsoft's resolver only. Custom ISO inputs
+# remain separate in the Standard workflow's tracked JSON configuration.
+
+name: Build Tiny11 Core-Gaming (VM/Lab)
+run-name: ${{ format('Core-Gaming / VM-Lab • {0} • {1}', inputs.windows_version, inputs.image_edition) }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      windows_version:
+        description: 'The Microsoft resolver currently maps only ProductEditionId 3813 (Windows 11 26H2). Add a verified resolver mapping before enabling other versions.'
+        required: false
+        default: '26H2'
+        type: choice
+        options:
+          - '26H2'
+      windows_build:
+        description: 'Fallback Windows build number (e.g. 26200.8655) — only used if it cannot be read directly from the ISO'
+        required: false
+        default: ''
+      image_index:
+        description: 'Source image index; enter 0 to select image_edition by exact image name. Default 0 avoids assuming a shared index across ISOs.'
+        required: false
+        default: '0'
+        type: string
+      image_edition:
+        description: 'Edition to select by exact image name when image_index is 0; Pro is the default.'
+        required: false
+        default: 'Pro'
+        type: choice
+        options:
+          - 'Home'
+          - 'Pro'
+          - 'Education'
+          - 'Enterprise'
+      language:
+        description: 'ISO language from Microsoft''s official download catalog.'
+        type: choice
+        required: false
+        default: 'English (United States)'
+        options:
+          - 'Arabic'
+          - 'Brazilian Portuguese'
+          - 'Bulgarian'
+          - 'Chinese Simplified'
+          - 'Chinese Traditional'
+          - 'Croatian'
+          - 'Czech'
+          - 'Danish'
+          - 'Dutch'
+          - 'English (United States)'
+          - 'English International'
+          - 'Estonian'
+          - 'Finnish'
+          - 'French'
+          - 'French Canadian'
+          - 'German'
+          - 'Greek'
+          - 'Hebrew'
+          - 'Hungarian'
+          - 'Italian'
+          - 'Japanese'
+          - 'Korean'
+          - 'Latvian'
+          - 'Lithuanian'
+          - 'Norwegian'
+          - 'Polish'
+          - 'Portuguese'
+          - 'Romanian'
+          - 'Russian'
+          - 'Serbian Latin'
+          - 'Slovak'
+          - 'Slovenian'
+          - 'Spanish'
+          - 'Spanish (Mexico)'
+          - 'Swedish'
+          - 'Thai'
+          - 'Turkish'
+          - 'Ukrainian'
+      skip_cleanup:
+        description: 'Skip cleanup (for debugging)'
+        required: false
+        default: false
+        type: boolean
+      enable_dotnet35:
+        description: 'Enable .NET Framework 3.5'
+        type: boolean
+        required: false
+        default: false
+      preserve_winre:
+        description: 'Preserve winre.wim (required for real hardware / 24H2+ installs to avoid 0x8007000B)'
+        type: boolean
+        required: false
+        default: false
+      account_setup:
+        description: 'Default classic: create your own local account in OOBE. auto-admin is a dangerous opt-in: blank-password Admin with one auto-logon; disposable isolated VMs only.'
+        type: choice
+        required: false
+        default: 'classic'
+        options:
+          - 'auto-admin'
+          - 'classic'
+
+      # ---------------- Gaming profile groups ----------------
+      hags:
+        description: 'Gaming: Hardware Accelerated GPU Scheduling. "on" forces it on, "off" forces it off, "leave" keeps the Core default.'
+        type: choice
+        required: false
+        default: 'on'
+        options:
+          - 'on'
+          - 'off'
+          - 'leave'
+      atlas_power_scheme:
+        description: 'Gaming: Configure the experimental power plan and request reduced power saving. Higher power use/temperature is possible; behavior varies by hardware and no performance gain is guaranteed.'
+        type: boolean
+        required: false
+        default: true
+      disable_cpu_idle:
+        description: 'Gaming: Request CPU C-State 0 (no idle). Raises idle power/temperature; effects vary and no performance gain is guaranteed.'
+        type: boolean
+        required: false
+        default: true
+      disable_security_mitigations:
+        description: 'Gaming: Optionally disable VBS, Memory Integrity (HVCI), Credential Guard, System Guard and kernel mitigations. Serious security downgrade; no FPS gain is claimed.'
+        type: boolean
+        required: false
+        default: true
+      remove_xbox_gaming_stack:
+        description: 'Gaming: Remove the Xbox Live / Gaming Services stack. BREAKS Game Pass, Microsoft Store games and Play Anywhere titles.'
+        type: boolean
+        required: false
+        default: true
+      strip_background_noise:
+        description: 'Gaming: Disable Windows Search indexing, Bluetooth, Delivery Optimization, background apps, visual effects and scripted diagnostics.'
+        type: boolean
+        required: false
+        default: true
+      instant_windows:
+        description: 'Gaming: Remove selected animations and shorten app-close timeouts. Slow applications may be terminated before saving; no speedup is guaranteed.'
+        type: boolean
+        required: false
+        default: true
+      disable_fast_startup:
+        description: 'Gaming: Disable hibernation and Fast Startup (Hiberboot).'
+        type: boolean
+        required: false
+        default: true
+      network_latency_tweaks:
+        description: 'Gaming: Change selected TCP, QoS, Delivery Optimization and Windows Update restart settings. No bandwidth or latency improvement is guaranteed.'
+        type: boolean
+        required: false
+        default: true
+      disable_mpo:
+        description: 'Gaming: Disable Multi-Plane Overlay, a workaround that may help or regress display behavior depending on drivers.'
+        type: boolean
+        required: false
+        default: true
+      latency_input_tweaks:
+        description: 'Gaming: Disable mouse acceleration and accessibility hotkeys; enable the DXGI flip model; turn off USB 3 link power management.'
+        type: boolean
+        required: false
+        default: true
+      interrupt_latency:
+        description: 'Gaming: Per-device MSI/priority, NIC and USB/HID changes at first boot. Hardware-specific; results and stability are unverified and may regress.'
+        type: boolean
+        required: false
+        default: true
+      disable_fso:
+        description: 'Gaming: Request Fullscreen Optimizations off; test compatibility with each game and display driver.'
+        type: boolean
+        required: false
+        default: true
+      disable_game_mode:
+        description: 'Gaming: Disable Windows Game Mode. Scheduling/compatibility effects vary by game; compare both states on the same machine.'
+        type: boolean
+        required: false
+        default: true
+      disable_printing:
+        description: 'Gaming: Disable print services and remove the printing optional features.'
+        type: boolean
+        required: false
+        default: true
+
+env:
+  ARIA2C_CONNECTIONS: '16'
+  ARIA2C_SPLIT: '16'
+  POWERSHELL_TELEMETRY_OPTOUT: '1'
+
+jobs:
+  build-tiny11-core-gaming:
+    runs-on: windows-latest
+    timeout-minutes: 480
+    permissions:
+      contents: read
+    env:
+      WINDOWS_VERSION: ${{ inputs.windows_version }}
+      WINDOWS_BUILD_FALLBACK: ${{ inputs.windows_build }}
+      REQUESTED_IMAGE_INDEX: ${{ inputs.image_index }}
+      REQUESTED_EDITION: ${{ inputs.image_edition }}
+      BUILD_LANGUAGE_INPUT: ${{ inputs.language }}
+      SKIP_CLEANUP: ${{ inputs.skip_cleanup }}
+      ENABLE_DOTNET35: ${{ inputs.enable_dotnet35 }}
+      PRESERVE_WINRE: ${{ inputs.preserve_winre }}
+      ACCOUNT_SETUP: ${{ inputs.account_setup || 'classic' }}
+      HAGS_MODE: ${{ inputs.hags }}
+      ATLAS_POWER_SCHEME: ${{ inputs.atlas_power_scheme }}
+      DISABLE_CPU_IDLE: ${{ inputs.disable_cpu_idle }}
+      DISABLE_SECURITY_MITIGATIONS: ${{ inputs.disable_security_mitigations }}
+      REMOVE_XBOX_GAMING_STACK: ${{ inputs.remove_xbox_gaming_stack }}
+      STRIP_BACKGROUND_NOISE: ${{ inputs.strip_background_noise }}
+      INSTANT_WINDOWS: ${{ inputs.instant_windows }}
+      DISABLE_FAST_STARTUP: ${{ inputs.disable_fast_startup }}
+      NETWORK_LATENCY_TWEAKS: ${{ inputs.network_latency_tweaks }}
+      DISABLE_MPO: ${{ inputs.disable_mpo }}
+      LATENCY_INPUT_TWEAKS: ${{ inputs.latency_input_tweaks }}
+      INTERRUPT_LATENCY: ${{ inputs.interrupt_latency }}
+      DISABLE_FSO: ${{ inputs.disable_fso }}
+      DISABLE_GAME_MODE: ${{ inputs.disable_game_mode }}
+      DISABLE_PRINTING: ${{ inputs.disable_printing }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+
+      - name: Validate build inputs
+        shell: pwsh
+        run: |
+          if ($env:WINDOWS_VERSION -ne '26H2') {
+            throw "This workflow currently resolves only Windows 11 26H2 (ProductEditionId 3813)."
+          }
+          if ($env:REQUESTED_IMAGE_INDEX -notmatch '^\d+$') {
+            throw "image_index must be 0 (select by edition name) or a positive numeric source index."
+          }
+          if ([int]$env:REQUESTED_IMAGE_INDEX -lt 0) {
+            throw "image_index cannot be negative."
+          }
+          if ($env:REQUESTED_EDITION -notin @('Home', 'Pro', 'Education', 'Enterprise')) {
+            throw "image_edition must be Home, Pro, Education, or Enterprise."
+          }
+          if ($env:ACCOUNT_SETUP -notin @('classic', 'auto-admin')) {
+            throw "account_setup must be classic or auto-admin."
+          }
+          if (-not [string]::IsNullOrWhiteSpace($env:WINDOWS_BUILD_FALLBACK) -and
+              $env:WINDOWS_BUILD_FALLBACK -notmatch '^\d{5}(?:\.\d+)?$') {
+            throw "windows_build must be a 5-digit build with an optional numeric revision."
+          }
+
+      - name: Record build start time
+        shell: pwsh
+        run: |
+          $startUnix = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+          Add-Content -Path $env:GITHUB_ENV -Value "BUILD_START_UNIX=$startUnix"
+
+      - name: Record requested build metadata
+        shell: pwsh
+        run: |
+          $date = Get-Date -Format 'yyyy-MM-dd'
+          $index = [int]$env:REQUESTED_IMAGE_INDEX
+          $edition = if ($index -eq 0) { $env:REQUESTED_EDITION } else { "Index$index" }
+          $language = $env:BUILD_LANGUAGE_INPUT -replace '[^a-zA-Z0-9]', ''
+
+          Add-Content -Path $env:GITHUB_ENV -Value "EDITION_NAME=$edition"
+          Add-Content -Path $env:GITHUB_ENV -Value "BUILD_DATE=$date"
+          Add-Content -Path $env:GITHUB_ENV -Value "BUILD_LANGUAGE=$language"
+          Write-Output "Requested edition: $edition"
+          Write-Output "Source image index: $index (0 means exact-name selection)"
+          Write-Output "Language label: $language"
+
+      - name: Validate gaming profile
+        shell: pwsh
+        run: |
+          # Fail fast: a malformed profile would otherwise waste an hour of build time.
+          $profilePath = "config\gaming_profile.json"
+          $powerPath = "config\gaming_power_settings.json"
+
+          if (-not (Test-Path $profilePath)) {
+            Write-Error "Gaming profile not found at $profilePath"
+            exit 1
+          }
+          if (-not (Test-Path $powerPath)) {
+            Write-Error "Power settings not found at $powerPath"
+            exit 1
+          }
+
+          try {
+            $profile = Get-Content $profilePath -Raw | ConvertFrom-Json
+            Write-Output "Gaming profile: $($profile.profile) (schema $($profile.schemaVersion))"
+            Write-Output "Registry entries: $($profile.registry.Count)"
+            Write-Output "Services:         $($profile.services.Count)"
+            Write-Output "AppX prefixes:    $($profile.appxPrefixes.Count)"
+            Write-Output "System packages:  $($profile.systemPackages.Count)"
+            Write-Output "Optional features:$($profile.optionalFeatures.Count)"
+          } catch {
+            Write-Error "Gaming profile JSON is invalid: $_"
+            exit 1
+          }
+
+          $power = Get-Content $powerPath -Raw | ConvertFrom-Json
+          Write-Output "Power scheme: $($power.schemeName) with $($power.settings.Count) setting(s)"
+
+          # The builder dot-sources this module, so a syntax error here would only show
+          # up deep into the build.
+          $null = [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path "scripts\gaming-profile.ps1"), [ref]$null, [ref]$null)
+          Write-Output "gaming-profile.ps1 parsed cleanly"
+
+      - name: Validate essentials profile
+        shell: pwsh
+        run: |
+          # The essentials pass has no toggle, so there is no way to skip it at build
+          # time if the data is wrong. Validate with the real engine, which also runs
+          # the boot-critical service guard - that is the check that stops a bad edit
+          # from producing an unbootable image.
+          $essentialsPath = "config\essentials_profile.json"
+          if (-not (Test-Path $essentialsPath)) {
+            Write-Error "Essentials profile not found at $essentialsPath"
+            exit 1
+          }
+
+          . "scripts\essentials-profile.ps1"
+          Initialize-EssentialsModule -LogFile $null -ProfileDirectory "config"
+
+          try {
+            $essentials = Import-EssentialsProfile -Path $essentialsPath
+          } catch {
+            Write-Error "Essentials profile is invalid: $_"
+            exit 1
+          }
+
+          Write-Output "Essentials pass: $($essentials.profile) (schema $($essentials.schemaVersion))"
+          Write-Output "Registry entries: $(@($essentials.registry).Count)"
+          Write-Output "Key deletions:    $(@($essentials.deleteKeys).Count)"
+          Write-Output "Services:         $(@($essentials.services).Count)"
+          Write-Output "  manual (3):     $(@($essentials.services | Where-Object { $_.start -eq 3 }).Count)"
+          Write-Output "  disabled (4):   $(@($essentials.services | Where-Object { $_.start -eq 4 }).Count)"
+
+          $null = [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path "scripts\essentials-profile.ps1"), [ref]$null, [ref]$null)
+          Write-Output "essentials-profile.ps1 parsed cleanly"
+
+          $null = [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path "scripts\Tiny11-Report.ps1"), [ref]$null, [ref]$null)
+          Write-Output "Tiny11-Report.ps1 parsed cleanly"
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+
+      - name: Install Python dependencies
+        run: pip install requests
+
+      - name: Discord - Build Started
+        continue-on-error: true
+        run: |
+          python scripts/discord_notify.py `
+            --webhook "$env:DISCORD_WEBHOOK" `
+            --type build-started `
+            --data (ConvertTo-Json @{
+              version = "$env:WINDOWS_VERSION"
+              build_type = "Core-Gaming"
+              edition = "$env:EDITION_NAME"
+              preserve_winre = "$env:PRESERVE_WINRE"
+              enable_dotnet35 = "$env:ENABLE_DOTNET35"
+              gaming_profile = "core-gaming"
+              hags_mode = "$env:HAGS_MODE"
+              account_setup = "$env:ACCOUNT_SETUP"
+            } -Compress)
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_BUILDS }}
+        shell: pwsh
+
+      - name: System information
+        shell: pwsh
+        run: |
+          Write-Output "=== System Information (Tiny11 Core-Gaming Build) ==="
+          Write-Output "OS: $(Get-CimInstance Win32_OperatingSystem | Select-Object -ExpandProperty Caption)"
+          Write-Output "PowerShell: $($PSVersionTable.PSVersion)"
+          Write-Output "Architecture: $env:PROCESSOR_ARCHITECTURE"
+
+          $disk = Get-PSDrive C
+          $freeGB = [math]::Round($disk.Free / 1GB, 2)
+          $totalGB = [math]::Round($disk.Used / 1GB + $disk.Free / 1GB, 2)
+          Write-Output "Disk C: ${freeGB}GB free / ${totalGB}GB total"
+
+          if ($freeGB -lt 25) {
+            Write-Error "Insufficient disk space. At least 25GB required for a Core-Gaming build, found ${freeGB}GB"
+            exit 1
+          }
+
+      - name: Install aria2c
+        shell: pwsh
+        run: |
+          Write-Output "Installing the aria2c download utility..."
+          choco install aria2 -y --no-progress
+          aria2c --version
+
+      # The two ISO steps below settle the download URL before anything expensive runs.
+      # Resolving the link and proving it is alive takes seconds; discovering a dead link
+      # after the ISO download has already started costs the whole run.
+      - name: Resolve Windows 11 ISO URL
+        shell: pwsh
+        run: |
+          $language = $env:BUILD_LANGUAGE_INPUT
+          Write-Output "Resolving a fresh official Microsoft ISO link for '$language'..."
+
+          try {
+            $iso = & .\scripts\resolve-windows-iso.ps1 -Language $language
+          } catch {
+            Write-Output "::error title=ISO resolve failed::$($_.Exception.Message)"
+            Write-Output ""
+            Write-Output "Microsoft's download service refused to hand out a link. This is normally"
+            Write-Output "temporary rate limiting or a blocked runner IP, and there is no way for this"
+            Write-Output "workflow to work around it."
+            Write-Output ""
+            Write-Output "Re-run later to request a fresh link. This workflow accepts Microsoft media only;"
+            Write-Output "custom ISO sources belong in the separate Standard JSON workflow."
+            exit 1
+          }
+
+          Write-Output "Resolved ISO: $($iso.FileName)"
+          Write-Output "  language : $($iso.Language)"
+          Write-Output "  SKU id   : $($iso.SkuId)"
+
+          # Mask the time-limited signed URL in case a downloader reports it on failure.
+          Write-Output "::add-mask::$($iso.Url)"
+          Add-Content -Path $env:GITHUB_ENV -Value "WINDOWS_ISO_URL=$($iso.Url)"
+          Add-Content -Path $env:GITHUB_ENV -Value "ISO_LANGUAGE=$($iso.Language)"
+
+      - name: Preflight - validate Windows ISO URL
+        shell: pwsh
+        run: |
+          $url = $env:WINDOWS_ISO_URL
+          if ([string]::IsNullOrWhiteSpace($url)) { throw "Microsoft resolver returned an empty ISO URL." }
+          try { $uri = [uri]$url } catch { throw "Microsoft resolver returned an invalid ISO URL." }
+          if ($uri.Scheme -ne 'https' -or
+              $uri.Host -notin @('software.download.prss.microsoft.com', 'download.microsoft.com') -or
+              $uri.UserInfo -or $uri.Fragment -or $uri.AbsolutePath -notmatch '(?i)\.iso$') {
+            throw "Microsoft resolver returned an ISO URL outside the approved HTTPS Microsoft hosts/path."
+          }
+
+          # Microsoft's dbazure links are signed and time-limited (?t=...&P1=...&P4=...).
+          # They expire roughly 24 hours after generation, so even a pinned URL can be dead
+          # before the download starts. A single HEAD request settles it in under a second
+          # and downloads zero bytes.
+          $safeUrl = ($url -split '\?')[0]
+          Write-Output "Checking ISO link: $safeUrl"
+
+          $code = (& curl.exe -s -I -L --max-time 30 -o NUL -w '%{http_code}' "$url").Trim()
+
+          # Some endpoints reject HEAD outright; fall back to a 1-byte ranged GET before
+          # concluding the link is dead, so we never fail a valid URL over a probe quirk.
+          if ($code -notin @('200', '206')) {
+            Write-Output "HEAD returned HTTP $code - retrying with a 1-byte ranged GET..."
+            $code = (& curl.exe -s -L --max-time 30 -r 0-0 -o NUL -w '%{http_code}' "$url").Trim()
+          }
+
+          Write-Output "ISO link responded with HTTP $code"
+
+          if ($code -notin @('200', '206')) {
+            Write-Output "::error title=Expired or invalid ISO URL::The Windows ISO link returned HTTP $code."
+            Write-Output ""
+            Write-Output "Microsoft download links are signed and time-limited. Re-run later to request a fresh link."
+            exit 1
+          }
+
+          Write-Output "ISO link is live - proceeding."
+
+      - name: Display build warnings
+        shell: pwsh
+        run: |
+          Write-Output "=== TINY11 CORE-GAMING SAFETY WARNINGS ==="
+          Write-Output "This is a disposable VM/Lab profile, not a daily-use image."
+          Write-Output "Windows Defender/Security and the entire Windows Update stack are always removed; the revert script cannot restore them."
+          Write-Output ""
+          if ($env:DISABLE_SECURITY_MITIGATIONS -eq 'true') {
+            Write-Output "WARNING: This run disables VBS/HVCI/Credential Guard and kernel mitigations."
+          } else {
+            Write-Output "Security mitigation group is off for this run; the Core baseline still removes Defender and Windows Update."
+          }
+          if ($env:REMOVE_XBOX_GAMING_STACK -eq 'true') { Write-Output "WARNING: Xbox/Game Pass/Store gaming features will be removed." }
+          if ($env:DISABLE_PRINTING -eq 'true') { Write-Output "WARNING: Printing services and optional features will be removed." }
+          if ($env:STRIP_BACKGROUND_NOISE -eq 'true') { Write-Output "WARNING: Search indexing, Bluetooth and selected background features will be disabled." }
+          if ($env:INSTANT_WINDOWS -eq 'true') { Write-Output "WARNING: Short shutdown timeouts may lose unsaved data in hung/slow applications." }
+          if ($env:PRESERVE_WINRE -ne 'true') { Write-Output "WARNING: WinRE will not be preserved; use disposable VM/Lab media only." }
+          Write-Output ""
+          Write-Output "A partial revert script is shipped at C:\Windows\Tiny11Gaming\Undo-GamingTweaks.ps1."
+          Write-Output "Removed components and Windows servicing cannot be restored by that script."
+
+      - name: Download Windows 11 ISO
+        shell: pwsh
+        run: |
+          # This URL was resolved from Microsoft's official catalog and masked before
+          # storage in job state. Never print its signed query string.
+          $url = $env:WINDOWS_ISO_URL
+          $output = "Win11_Source.iso"
+
+          Write-Output "Downloading Windows 11 ISO from Microsoft servers..."
+
+          $startTime = Get-Date
+
+          aria2c `
+            --console-log-level=info `
+            --summary-interval=30 `
+            --max-connection-per-server=${{ env.ARIA2C_CONNECTIONS }} `
+            --split=${{ env.ARIA2C_SPLIT }} `
+            --min-split-size=5M `
+            --max-tries=5 `
+            --retry-wait=3 `
+            --timeout=60 `
+            --connect-timeout=30 `
+            --continue=true `
+            --allow-overwrite=true `
+            --auto-file-renaming=false `
+            --file-allocation=none `
+            --check-integrity=true `
+            --out=$output `
+            "$url"
+
+          $aria2ExitCode = $LASTEXITCODE
+          if ($aria2ExitCode -ne 0) {
+            throw "aria2c failed with exit code $aria2ExitCode; the signed download URL is intentionally omitted."
+          }
+
+          $downloadTime = (Get-Date) - $startTime
+
+          if (-not (Test-Path $output)) {
+            Write-Error "Download failed - ISO file not found"
+            exit 1
+          }
+
+          $sizeGB = [math]::Round((Get-Item $output).Length / 1GB, 2)
+          Write-Output "Download complete: ${sizeGB}GB in $($downloadTime.TotalMinutes.ToString('F2')) minutes"
+
+      - name: Mount Windows ISO
+        shell: pwsh
+        run: |
+          $isoPath = Join-Path $PWD "Win11_Source.iso"
+          Write-Output "Mounting ISO: $isoPath"
+
+          $mount = Mount-DiskImage -ImagePath $isoPath -PassThru -StorageType ISO
+
+          $maxRetries = 10
+          $retryCount = 0
+          $driveLetter = $null
+
+          while (-not $driveLetter -and $retryCount -lt $maxRetries) {
+            Start-Sleep -Seconds 5
+            try {
+              $driveInfo = Get-Volume -DiskImage $mount -ErrorAction SilentlyContinue
+              if ($driveInfo -and $driveInfo.DriveLetter) {
+                $driveLetter = $driveInfo.DriveLetter
+                Write-Output "Drive letter retrieved on attempt $($retryCount + 1): $driveLetter"
+              }
+            } catch {
+              Write-Output "Attempt $($retryCount + 1) failed: $($_.Exception.Message)"
+            }
+            $retryCount++
+          }
+
+          if (-not $driveLetter) {
+            Write-Error "Failed to retrieve drive letter after $maxRetries attempts"
+            $drive = Get-CimInstance -ClassName Win32_LogicalDisk | Where-Object { $_.Description -eq "CD-ROM Disc" -and $_.DeviceID -ne $null }
+            if ($drive) {
+              $driveLetter = $drive.DeviceID.TrimEnd(":")
+              Write-Output "Drive letter found via WMI: $driveLetter"
+            } else {
+              Write-Error "Failed to mount ISO or retrieve drive letter"
+              exit 1
+            }
+          }
+
+          Write-Output "ISO mounted successfully at drive: ${driveLetter}:"
+
+          $requiredFiles = @(
+            "${driveLetter}:\sources\boot.wim",
+            "${driveLetter}:\sources\install.wim",
+            "${driveLetter}:\sources\install.esd"
+          )
+
+          $foundFiles = $requiredFiles | Where-Object { Test-Path $_ }
+
+          if ($foundFiles.Count -eq 0) {
+            Write-Error "No install.wim or install.esd found on mounted ISO"
+            exit 1
+          }
+
+          Write-Output "Found: $($foundFiles -join ', ')"
+
+          Add-Content -Path $env:GITHUB_ENV -Value "ISO_DRIVE=$driveLetter"
+
+      - name: Prepare autounattend.xml
+        shell: pwsh
+        run: |
+          if (Test-Path "autounattend.xml") {
+            Write-Output "Found local autounattend.xml"
+            Copy-Item "autounattend.xml" "scripts\autounattend.xml" -Force
+            Write-Output "Copied to scripts directory"
+          } else {
+            Write-Warning "autounattend.xml not found in root!"
+          }
+
+      - name: Verify headless script
+        shell: pwsh
+        run: |
+          $scriptPath = ".\scripts\tiny11coremaker-headless.ps1"
+
+          if (-not (Test-Path $scriptPath)) {
+            Write-Error "Headless Core script not found at $scriptPath"
+            Write-Output "Available files:"
+            Get-ChildItem -Path . -Recurse -Filter "*.ps1" | ForEach-Object { Write-Output $_.FullName }
+            exit 1
+          }
+
+          Write-Output "Headless Core script found: $scriptPath"
+          Write-Output "Script size: $([math]::Round((Get-Item $scriptPath).Length / 1KB, 2)) KB"
+
+      - name: Run tiny11coremaker (headless, Core-Gaming)
+        shell: pwsh
+        run: |
+          Set-ExecutionPolicy Bypass -Scope Process -Force
+
+          $params = @{
+            ISO = $env:ISO_DRIVE
+            INDEX = [int]$env:REQUESTED_IMAGE_INDEX
+            Edition = $env:REQUESTED_EDITION
+          }
+
+          if ($env:SKIP_CLEANUP -eq 'true') {
+            $params.SkipCleanup = $true
+            Write-Output "Cleanup will be skipped (debugging mode)"
+          }
+
+          $enableDotNet = $env:ENABLE_DOTNET35 -eq 'true'
+          $preserveWinRE = $env:PRESERVE_WINRE -eq 'true'
+          $accountSetup = $env:ACCOUNT_SETUP
+          $hagsMode = $env:HAGS_MODE
+
+          # Map workflow toggles 1:1 onto config/gaming_profile.json groups.
+          $gamingGroups = @{
+            atlas_power_scheme           = ($env:ATLAS_POWER_SCHEME -eq 'true')
+            disable_cpu_idle             = ($env:DISABLE_CPU_IDLE -eq 'true')
+            disable_security_mitigations = ($env:DISABLE_SECURITY_MITIGATIONS -eq 'true')
+            remove_xbox_gaming_stack     = ($env:REMOVE_XBOX_GAMING_STACK -eq 'true')
+            strip_background_noise       = ($env:STRIP_BACKGROUND_NOISE -eq 'true')
+            instant_windows              = ($env:INSTANT_WINDOWS -eq 'true')
+            disable_fast_startup         = ($env:DISABLE_FAST_STARTUP -eq 'true')
+            network_latency_tweaks       = ($env:NETWORK_LATENCY_TWEAKS -eq 'true')
+            disable_mpo                  = ($env:DISABLE_MPO -eq 'true')
+            latency_input_tweaks         = ($env:LATENCY_INPUT_TWEAKS -eq 'true')
+            interrupt_latency            = ($env:INTERRUPT_LATENCY -eq 'true')
+            disable_fso                  = ($env:DISABLE_FSO -eq 'true')
+            disable_game_mode            = ($env:DISABLE_GAME_MODE -eq 'true')
+            disable_printing             = ($env:DISABLE_PRINTING -eq 'true')
+          }
+
+          Write-Output "=== Starting Tiny11 Core-Gaming Builder ==="
+          Write-Output "ISO Drive: $($params.ISO)"
+          Write-Output "Requested image index: $($params.INDEX)"
+          Write-Output "Requested edition: $($params.Edition)"
+          Write-Output ".NET 3.5: $enableDotNet"
+          Write-Output "Preserve WinRE: $preserveWinRE"
+          Write-Output "Account setup: $accountSetup"
+          Write-Output "HAGS: $hagsMode"
+          Write-Output "Gaming groups:"
+          foreach ($name in ($gamingGroups.Keys | Sort-Object)) {
+            $state = if ($gamingGroups[$name]) { 'ON ' } else { 'off' }
+            Write-Output "  [$state] $name"
+          }
+          Write-Output "Timestamp: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
+
+          $startTime = Get-Date
+          .\scripts\tiny11coremaker-headless.ps1 @params `
+            -ENABLE_DOTNET35:$enableDotNet `
+            -PreserveWinRE:$preserveWinRE `
+            -AccountSetup $accountSetup `
+            -GamingProfile `
+            -GamingGroups $gamingGroups `
+            -HagsMode $hagsMode
+
+          $buildTime = (Get-Date) - $startTime
+          Write-Output "Core-Gaming build completed in $($buildTime.TotalMinutes.ToString('F2')) minutes"
+
+      - name: Verify tiny11 Core-Gaming ISO creation
+        id: build_metadata
+        shell: pwsh
+        run: |
+          $tempIso = "scripts\tiny11-core.iso"
+          if (-not (Test-Path -LiteralPath $tempIso)) {
+            throw "$tempIso was not created."
+          }
+
+          # Do not label the output solely from workflow inputs; require the actual
+          # source image/edition emitted by the builder.
+          $buildInfoPath = "scripts\tiny11core-buildinfo.json"
+          if (-not (Test-Path -LiteralPath $buildInfoPath)) {
+            throw "Build metadata $buildInfoPath is missing; refusing to package an ambiguously labelled ISO."
+          }
+          try {
+            $buildInfo = Get-Content -LiteralPath $buildInfoPath -Raw | ConvertFrom-Json
+          } catch {
+            throw "Could not parse builder metadata: $($_.Exception.Message)"
+          }
+
+          $buildNumber = [string]$buildInfo.windows_build
+          if ([string]::IsNullOrWhiteSpace($buildNumber)) {
+            $buildNumber = $env:WINDOWS_BUILD_FALLBACK
+          }
+          if ($buildNumber -notmatch '^\d{5}(?:\.\d+)?$') {
+            throw "Build metadata and fallback did not produce a valid Windows build number."
+          }
+
+          $sourceImageIndex = [string]$buildInfo.source_index
+          $sourceImageName = (([string]$buildInfo.image_name).Trim() -replace '[\r\n]+', ' ')
+          $finalImageIndex = [string]$buildInfo.final_image_index
+          $actualEdition = (([string]$buildInfo.edition).Trim() -replace '[\r\n]+', ' ')
+          $edition = $actualEdition -replace '[^A-Za-z0-9-]', ''
+          if ($sourceImageIndex -notmatch '^\d+$' -or
+              [string]::IsNullOrWhiteSpace($sourceImageName) -or
+              $finalImageIndex -ne '1' -or
+              [string]::IsNullOrWhiteSpace($edition)) {
+            throw "Builder metadata does not contain the actual source image, edition, and final index 1."
+          }
+
+          $gamingInfoPath = "scripts\tiny11core-gaming-buildinfo.json"
+          if (-not (Test-Path -LiteralPath $gamingInfoPath)) {
+            throw "Core-Gaming metadata $gamingInfoPath is missing; the gaming profile may not have run."
+          }
+          try {
+            $gamingInfo = Get-Content -LiteralPath $gamingInfoPath -Raw | ConvertFrom-Json
+          } catch {
+            throw "Could not parse Core-Gaming metadata: $($_.Exception.Message)"
+          }
+          if ([string]::IsNullOrWhiteSpace([string]$gamingInfo.gaming_profile)) {
+            throw "Core-Gaming metadata contains no applied profile identity."
+          }
+
+          Write-Output "Actual source image: index $sourceImageIndex - $sourceImageName"
+          Write-Output "Final install.wim image index: $finalImageIndex"
+          Write-Output "Actual edition: $actualEdition"
+          Write-Output "Windows build: $buildNumber"
+          Write-Output "Gaming profile: $($gamingInfo.gaming_profile)"
+
+          $version = $env:WINDOWS_VERSION
+          $language = $env:BUILD_LANGUAGE
+          $date = $env:BUILD_DATE
+          $isoName = "Tiny11CoreGaming-$version-$buildNumber-$language-$edition-$date.iso"
+          Move-Item -LiteralPath $tempIso -Destination $isoName -Force
+          if (-not (Test-Path -LiteralPath $isoName)) { throw "Renamed ISO $isoName is missing." }
+
+          $sizeGB = [math]::Round((Get-Item -LiteralPath $isoName).Length / 1GB, 2)
+          $sha256 = (Get-FileHash -LiteralPath $isoName -Algorithm SHA256).Hash
+          "$sha256  $isoName" | Out-File -FilePath "$isoName.sha256" -Encoding ASCII
+
+          $verificationInfo = @"
+          Tiny11 Core-Gaming ISO Verification
+          ===================================
+          File: $isoName
+          Windows version label: $version
+          Windows build: $buildNumber
+          Actual source image: index $sourceImageIndex - $sourceImageName
+          Final image index: $finalImageIndex
+          Actual edition: $actualEdition
+          Language: $language
+          Size: ${sizeGB}GB
+          Build date: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss UTC')
+          Workflow run: $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID
+
+          Profile: TINY11 CORE-GAMING (experimental VM/Lab)
+          Account setup: $env:ACCOUNT_SETUP
+          WinRE preserved: $env:PRESERVE_WINRE
+          .NET 3.5 enabled: $env:ENABLE_DOTNET35
+          HAGS: $env:HAGS_MODE
+          Windows Defender/Security: always removed
+          Windows Update stack: always removed
+          Security mitigation group enabled: $env:DISABLE_SECURITY_MITIGATIONS
+          Printing disabled: $env:DISABLE_PRINTING
+          Xbox stack removal enabled: $env:REMOVE_XBOX_GAMING_STACK
+
+          SHA256: $sha256
+          "@
+          $verificationInfo | Out-File -FilePath "$isoName.txt" -Encoding UTF8
+
+          Add-Content -Path $env:GITHUB_ENV -Value "EDITION_NAME=$edition"
+          Add-Content -Path $env:GITHUB_ENV -Value "SOURCE_IMAGE_INDEX=$sourceImageIndex"
+          Add-Content -Path $env:GITHUB_ENV -Value "SOURCE_IMAGE_NAME=$sourceImageName"
+          Add-Content -Path $env:GITHUB_ENV -Value "FINAL_IMAGE_INDEX=$finalImageIndex"
+          Add-Content -Path $env:GITHUB_ENV -Value "ISO_NAME=$isoName"
+          Add-Content -Path $env:GITHUB_ENV -Value "ISO_SIZE_GB=$sizeGB"
+          Add-Content -Path $env:GITHUB_ENV -Value "ISO_SHA256=$sha256"
+          Add-Content -Path $env:GITHUB_ENV -Value "WINDOWS_BUILD_NUMBER=$buildNumber"
+
+          Write-Output "=== TINY11 CORE-GAMING BUILD SUMMARY ==="
+          Write-Output "Output: $isoName ($sizeGB GB)"
+          Write-Output "Source image index: $sourceImageIndex; final index: $finalImageIndex"
+          Write-Output "SHA256: $sha256"
+
+      - name: Discord - Build Completed
+        if: success()
+        continue-on-error: true
+        run: |
+          $isoSize = if ($env:ISO_SIZE_GB) {
+            "$env:ISO_SIZE_GB GB"
+          } else {
+            $isoPath = Get-ChildItem -Path . -Filter "*.iso" -Recurse | Select-Object -First 1
+            if ($isoPath) { "{0:N2} GB" -f ($isoPath.Length / 1GB) } else { "Unknown" }
+          }
+
+          $elapsed = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - [long]$env:BUILD_START_UNIX
+          $duration = "{0}m {1}s" -f [math]::Floor($elapsed / 60), ($elapsed % 60)
+
+          python scripts/discord_notify.py `
+            --webhook "$env:DISCORD_WEBHOOK" `
+            --type build-completed `
+            --data (ConvertTo-Json @{
+              version = "$env:WINDOWS_VERSION"
+              build_type = "Core-Gaming"
+              edition = "$env:EDITION_NAME"
+              duration = $duration
+              iso_size = $isoSize
+              download_url = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
+              distribution = "Temporary GitHub Actions artifact (7-day retention); no permanent host configured"
+              preserve_winre = "$env:PRESERVE_WINRE"
+              enable_dotnet35 = "$env:ENABLE_DOTNET35"
+              gaming_profile = "core-gaming"
+              hags_mode = "$env:HAGS_MODE"
+              account_setup = "$env:ACCOUNT_SETUP"
+              windows_build = "$env:WINDOWS_BUILD_NUMBER"
+            } -Compress)
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_BUILDS }}
+        shell: pwsh
+
+      - name: Cleanup source ISO
+        shell: pwsh
+        run: |
+          if ($env:SKIP_CLEANUP -eq 'true') {
+            Write-Output "Skip-cleanup requested; leaving the mounted source ISO and scratch files for diagnostics."
+            exit 0
+          }
+
+          $isoPath = Join-Path $PWD "Win11_Source.iso"
+          if (Test-Path -LiteralPath $isoPath) {
+            $image = Get-DiskImage -ImagePath $isoPath -ErrorAction SilentlyContinue
+            if ($image -and $image.Attached) {
+              Dismount-DiskImage -ImagePath $isoPath -ErrorAction Stop
+              Write-Output "Source ISO dismounted."
+            }
+            Remove-Item -LiteralPath $isoPath -Force -ErrorAction Stop
+          }
+          $freeGB = [math]::Round((Get-PSDrive C).Free / 1GB, 2)
+          Write-Output "Available runner space after source cleanup: ${freeGB}GB"
+
+      - name: Upload temporary ISO artifact
+        if: success()
+        uses: actions/upload-artifact@v7
+        with:
+          name: tiny11-core-gaming-${{ github.run_id }}
+          path: |
+            ${{ env.ISO_NAME }}
+            ${{ env.ISO_NAME }}.sha256
+            ${{ env.ISO_NAME }}.txt
+            scripts/tiny11core-buildinfo.json
+            scripts/tiny11core-gaming-buildinfo.json
+          retention-days: 7
+          compression-level: 0
+          if-no-files-found: error
+
+      - name: Upload build configuration report
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: tiny11-core-gaming-config-${{ github.run_id }}
+          path: |
+            scripts/tiny11core-buildinfo.json
+            scripts/tiny11core-gaming-buildinfo.json
+            config/gaming_profile.json
+            config/gaming_power_settings.json
+            config/essentials_profile.json
+          retention-days: 7
+          if-no-files-found: warn
+
+      - name: Workflow summary
+        shell: pwsh
+        run: |
+          $winreStatus = if ($env:PRESERVE_WINRE -eq 'true') { 'Preserved' } else { 'Not preserved (VM/Lab only)' }
+          $securityStatus = if ($env:DISABLE_SECURITY_MITIGATIONS -eq 'true') { 'Disabled by selected group' } else { 'Group off; Core still removes Defender and Windows Update' }
+          $summary = @"
+          # ✅ Tiny11 Core-Gaming Build Completed
+
+          > Experimental disposable VM/Lab profile. No performance gain is benchmark-validated or guaranteed.
+
+          ## Build Information
+          - **ISO:** $env:ISO_NAME
+          - **Size:** $env:ISO_SIZE_GB GB
+          - **Version label:** $env:WINDOWS_VERSION
+          - **Detected build:** $env:WINDOWS_BUILD_NUMBER
+          - **Selected image:** $env:SOURCE_IMAGE_NAME
+          - **Source index → final image index:** $env:SOURCE_IMAGE_INDEX → $env:FINAL_IMAGE_INDEX
+          - **Account setup:** $env:ACCOUNT_SETUP
+          - **WinRE:** $winreStatus
+          - **.NET 3.5:** $env:ENABLE_DOTNET35
+          - **HAGS:** $env:HAGS_MODE
+
+          ## Temporary download
+          The ISO and verification files are in the GitHub Actions artifact for this run. Artifacts expire after 7 days; this workflow does not create a GitHub Release or use permanent hosting.
+
+          ## SHA-256
+          ``````
+          $env:ISO_SHA256
+          ``````
+
+          ## Safety and compatibility
+          - Windows Defender/Security and the full Windows Update stack are always removed; the revert script cannot restore them.
+          - Security mitigation group: $securityStatus
+          - Printing disabled: $env:DISABLE_PRINTING; Xbox stack removal: $env:REMOVE_XBOX_GAMING_STACK
+          - WinRE: $winreStatus
+          - See $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/blob/$env:GITHUB_SHA/GAMING.md for the full behavior and irreversible changes.
+
+          Built by **NggKhaiz**; automation credit: **kelexine**; original builder: **ntdevlabs**.
+          "@
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value $summary
+
+      - name: Capture build error for Discord
+        if: failure()
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $logFile = Get-ChildItem -Path scripts -Filter "tiny11-core_*.log" -ErrorAction SilentlyContinue |
+                     Sort-Object LastWriteTime -Descending |
+                     Select-Object -First 1
+          if ($logFile) {
+            $errorLines = Select-String -Path $logFile.FullName -Pattern '\[ERROR\]' |
+                          Select-Object -Last 10 |
+                          ForEach-Object { $_.Line }
+            $errorSummary = if ($errorLines) {
+              $errorLines -join "`n"
+            } else {
+              (Get-Content $logFile.FullName -Tail 5) -join "`n"
+            }
+            Add-Content -Path $env:GITHUB_ENV -Value "BUILD_ERROR_SUMMARY<<EOF"
+            Add-Content -Path $env:GITHUB_ENV -Value $errorSummary
+            Add-Content -Path $env:GITHUB_ENV -Value "EOF"
+          } else {
+            Add-Content -Path $env:GITHUB_ENV -Value "BUILD_ERROR_SUMMARY=No builder log found — check step outputs above."
+          }
+
+      - name: Upload build log on failure
+        if: failure()
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: tiny11-core-gaming-build-log-${{ github.run_id }}
+          path: scripts/tiny11-core_*.log
+          retention-days: 7
+          if-no-files-found: warn
+
+      - name: Discord - Build Failed
+        if: failure()
+        continue-on-error: true
+        run: |
+          $elapsed = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - [long]$env:BUILD_START_UNIX
+          $duration = "{0}m {1}s" -f [math]::Floor($elapsed / 60), ($elapsed % 60)
+
+          python scripts/discord_notify.py `
+            --webhook "$env:DISCORD_WEBHOOK" `
+            --type build-failed `
+            --data (ConvertTo-Json @{
+              version = "$env:WINDOWS_VERSION"
+              build_type = "Core-Gaming"
+              edition = "$env:EDITION_NAME"
+              duration = $duration
+              error = $env:BUILD_ERROR_SUMMARY
+              logs_url = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
+              gaming_profile = "core-gaming"
+              hags_mode = "$env:HAGS_MODE"
+              account_setup = "$env:ACCOUNT_SETUP"
+              windows_build = "$env:WINDOWS_BUILD_NUMBER"
+            } -Compress)
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_ERRORS }}
+        shell: pwsh

@@ -391,6 +391,9 @@ def _build_extra_fields(data: Dict) -> Optional[List[Dict]]:
       - enable_dotnet35 → '.NET 3.5' field (Core builds)
       - bypass_hardware_requirements → explicit unsupported-hardware testing setting
       - distribution    → non-URL artifact/hosting status text
+      - gaming_profile  → 'Gaming profile' field (Core-Gaming builds)
+      - hags_mode       → 'HAGS' field (Core-Gaming builds)
+      - account_setup   → selected OOBE account mode
 
     Unknown keys are silently ignored so future callers can extend the payload
     without touching this function.
@@ -439,6 +442,32 @@ def _build_extra_fields(data: Dict) -> Optional[List[Dict]]:
                 'inline': False
             })
 
+    if 'gaming_profile' in data and data['gaming_profile']:
+        fields.append({
+            'name': 'Gaming profile',
+            'value': DiscordNotifier._truncate(str(data['gaming_profile']), limit=500),
+            'inline': True
+        })
+
+    if 'hags_mode' in data and data['hags_mode']:
+        fields.append({
+            'name': 'HAGS',
+            'value': DiscordNotifier._truncate(str(data['hags_mode']), limit=500),
+            'inline': True
+        })
+
+    if 'account_setup' in data and data['account_setup']:
+        value = str(data['account_setup'])
+        if value == 'auto-admin':
+            value = '⚠️ Blank-password Admin (disposable lab only)'
+        elif value == 'classic':
+            value = 'Classic local-account OOBE'
+        fields.append({
+            'name': 'Account setup',
+            'value': DiscordNotifier._truncate(value, limit=500),
+            'inline': True
+        })
+
     return fields if fields else None
 
 
@@ -476,11 +505,18 @@ def main():
         print("❌ --data must be a JSON object or array")
         return 1
 
-    # Coerce known embed fields to strings so Discord doesn't 400 on numeric values
+    # Coerce optional and required embed values to strings so Discord does not
+    # reject numeric JSON values. Keep all supported fields here, including both
+    # the Standard hardware/distribution fields and Core-Gaming metadata.
     if isinstance(data, dict):
-        for k in ('version', 'build_type', 'edition', 'duration', 'iso_size', 'error', 'logs_url', 'windows_build', 'distribution', 'bypass_hardware_requirements'):
-            if k in data and data[k] is not None:
-                data[k] = str(data[k])
+        for key in (
+            'version', 'build_type', 'edition', 'duration', 'iso_size', 'error',
+            'logs_url', 'windows_build', 'preserve_winre', 'enable_dotnet35',
+            'distribution', 'bypass_hardware_requirements', 'gaming_profile',
+            'hags_mode', 'account_setup', 'download_url',
+        ):
+            if key in data and data[key] is not None:
+                data[key] = str(data[key])
 
     try:
         notifier = DiscordNotifier(webhook_url)

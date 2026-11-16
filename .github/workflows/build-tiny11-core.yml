@@ -62,6 +62,19 @@ on:
         type: boolean
         required: false
         default: false
+      remove_defender:
+        description: 'Completely remove Windows Defender / Security - no Antimalware service will be present in the finished image'
+        type: boolean
+        required: false
+        default: false
+      account_setup:
+        description: 'Default classic: create your own offline local account in OOBE. auto-admin is an unsafe opt-in: blank-password Admin and one auto-logon; disposable isolated VMs only.'
+        type: choice
+        required: false
+        default: 'classic'
+        options:
+          - 'auto-admin'
+          - 'classic'
 
 env:
   ARIA2C_CONNECTIONS: '16'
@@ -82,6 +95,7 @@ jobs:
       BUILD_LANGUAGE_INPUT: ${{ inputs.language }}
       SKIP_CLEANUP: ${{ inputs.skip_cleanup }}
       EXPECTED_ISO_PATH: ${{ inputs.expected_iso_path }}
+      ACCOUNT_SETUP: ${{ inputs.account_setup || 'classic' }}
       PRESERVE_WINRE: ${{ inputs.preserve_winre }}
       ENABLE_DOTNET35: ${{ inputs.enable_dotnet35 }}
       BYPASS_HARDWARE_REQUIREMENTS: ${{ inputs.bypass_hardware_requirements }}
@@ -180,6 +194,7 @@ jobs:
           $winrePlan = if ($env:PRESERVE_WINRE -eq 'true') { 'Preserved' } else { 'Not preserved (VM/Lab only)' }
           $dotnetPlan = if ($env:ENABLE_DOTNET35 -eq 'true') { 'Enabled' } else { 'Not enabled' }
           $bypassPlan = if ($env:BYPASS_HARDWARE_REQUIREMENTS -eq 'true') { 'Explicitly enabled (unsupported hardware; testing only)' } else { 'Disabled' }
+          $accountSetupPlan = if ([string]::IsNullOrWhiteSpace($env:ACCOUNT_SETUP)) { 'classic' } else { $env:ACCOUNT_SETUP }
           $plan = @"
           # 🧪 Tiny11 Core / VM-Lab build plan
 
@@ -195,6 +210,7 @@ jobs:
           | WinRE | $winrePlan |
           | .NET Framework 3.5 | $dotnetPlan |
           | Hardware requirement bypass | $bypassPlan |
+          | Account setup | $accountSetupPlan |
           | Cleanup | $cleanupPlan |
           "@
           Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value $plan
@@ -212,6 +228,7 @@ jobs:
               preserve_winre = "$env:PRESERVE_WINRE"
               enable_dotnet35 = "$env:ENABLE_DOTNET35"
               bypass_hardware_requirements = "$env:BYPASS_HARDWARE_REQUIREMENTS"
+              account_setup = "$env:ACCOUNT_SETUP"
             } -Compress)
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_BUILDS }}
@@ -443,17 +460,31 @@ jobs:
           $preserveWinRE = [System.Boolean]::Parse("$env:PRESERVE_WINRE")
           Write-Output "Preserve WinRE: $preserveWinRE"
 
+          # Compare against the literal string so an omitted input (e.g. a
+          # dispatch from the version-matrix-builder automation, which does not
+          # send this key) degrades to $false instead of throwing.
+          $removeDefender = ("${{ github.event.inputs.remove_defender }}" -eq "true")
+          Write-Output "Remove Defender: $removeDefender"
+
+          # Only fall back to the default when nothing was supplied, so the
+          # builder's ValidateSet never receives an empty string.
+          $accountSetup = "$env:ACCOUNT_SETUP"
+          if ([string]::IsNullOrWhiteSpace($accountSetup)) { $accountSetup = 'classic' }
+          Write-Output "Account setup: $accountSetup"
+
           Write-Output "=== Starting Tiny11 Core Builder ==="
           Write-Output "ISO Drive: $($params.ISO)"
           Write-Output "Image Index: $($params.INDEX)"
           Write-Output ".NET 3.5: $enableDotNet"
           Write-Output "Preserve WinRE: $preserveWinRE"
+          Write-Output "Remove Defender: $removeDefender"
+          Write-Output "Account setup: $accountSetup"
           Write-Output "Timestamp: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
           Write-Output "WARNING: This is a CORE build with aggressive optimization!"
 
           $startTime = Get-Date
 
-          .\scripts\tiny11coremaker-headless.ps1 @params -ENABLE_DOTNET35:$enableDotNet -PreserveWinRE:$preserveWinRE
+          .\scripts\tiny11coremaker-headless.ps1 @params -ENABLE_DOTNET35:$enableDotNet -PreserveWinRE:$preserveWinRE -RemoveDefender:$removeDefender -AccountSetup $accountSetup
 
           $buildTime = (Get-Date) - $startTime
           Write-Output "Core build completed in $($buildTime.TotalMinutes.ToString('F2')) minutes"
