@@ -1,0 +1,8 @@
+{
+  "$schema": "./build_config.schema.json",
+  "iso_url": "",
+  "image_edition": "Pro",
+  "image_index": 0,
+  "language": "English",
+  "skip_cleanup": false
+}

@@ -1,18 +1,22 @@
 #!/usr/bin/env python3
 """
 Microsoft Windows Direct Download Link Generator (Playwright)
-Author: kelexine (https://github.com/kelexine)
+Maintainer: NggKhaiz | automation credit: kelexine | original builder: ntdevlabs
 
 Uses Playwright browser automation to extract JavaScript-generated direct download links.
 Includes user-agent rotation and random delays to avoid rate limiting.
 """
 
+import hashlib
 import logging
 import re
 import random
 import time
 from typing import Optional, Dict, List
-from datetime import datetime
+from datetime import datetime, timezone
+from urllib.parse import unquote, urlsplit, urlunsplit
+
+import requests
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
 
 logger = logging.getLogger(__name__)
@@ -22,6 +26,10 @@ class MicrosoftPlaywrightDownloader:
     """Generate direct download links using Playwright browser automation"""
     
     DOWNLOAD_PAGE = "https://www.microsoft.com/en-us/software-download/windows11"
+    APPROVED_DOWNLOAD_HOSTS = {
+        "software.download.prss.microsoft.com",
+        "download.microsoft.com",
+    }
     
     # Pool of 10 different user agents for rotation
     USER_AGENTS = [
@@ -144,7 +152,7 @@ class MicrosoftPlaywrightDownloader:
                         page.select_option('#product-edition', label='Windows 11 (multi-edition ISO for x64 devices)')
                         selected_edition = True
                 except Exception as select_err:
-                    logger.warning(f"⚠️ Dynamic text/label matching failed: {select_err}")
+                    logger.warning("⚠️ Dynamic text/label matching failed (%s)", type(select_err).__name__)
                     # Revert to known hardcoded values
                     for fallback_val in ['3321', '3262']:
                         try:
@@ -182,13 +190,8 @@ class MicrosoftPlaywrightDownloader:
                 # NOTE: We select by label to ensure we get the correct language regardless of list order
                 logger.info(f"✅ Selecting language: English (United States)...")
                 
-                # Try English (United States) first, then fallback to English International
-                try:
-                    page.select_option('#product-languages', label='English (United States)')
-                except Exception as e:
-                    logger.warning(f"Could not select 'English (United States)': {e}")
-                    logger.info("Trying 'English International'...")
-                    page.select_option('#product-languages', label='English International')
+                # Select only English (United States) so the language metadata remains accurate.
+                page.select_option('#product-languages', label='English (United States)')
                 
                 self._random_delay(0.5, 1.0)
                 
@@ -213,8 +216,9 @@ class MicrosoftPlaywrightDownloader:
                     browser.close()
                     return None
                 
-                logger.info(f"✅ Successfully extracted download link!")
-                logger.info(f"🔗 URL: {download_url[:100]}...")
+                logger.info("Successfully extracted the Microsoft ISO link")
+                safe_url = urlsplit(download_url)
+                logger.info("ISO path: %s%s (signed query omitted)", safe_url.netloc, safe_url.path)
                 
                 # Verify it's an ISO link
                 if '.iso' in download_url.lower():
@@ -226,52 +230,93 @@ class MicrosoftPlaywrightDownloader:
                 return download_url
                 
         except PlaywrightTimeout as e:
-            logger.error(f"❌ Timeout waiting for page element: {e}")
+            logger.error("❌ Timeout waiting for a Microsoft download-page element (%s)", type(e).__name__)
             return None
         except Exception as e:
-            logger.error(f"❌ Error during browser automation: {e}")
-            import traceback
-            logger.debug(traceback.format_exc())
+            # Browser/request exception strings can contain a signed CDN URL.
+            logger.error("❌ Browser automation failed (%s); exception details omitted", type(e).__name__)
             return None
     
+    @staticmethod
+    def _get_iso_validator(direct_url: str) -> str:
+        """Read inexpensive HTTP metadata to detect a refreshed ISO at the same path.
+
+        The URL contains short-lived signed query parameters. Those are intentionally
+        excluded from the identity; the CDN's ETag/Last-Modified/length are used when
+        available. If the host does not expose validators, the stable file path is used.
+        """
+        try:
+            response = requests.head(direct_url, allow_redirects=True, timeout=(10, 20))
+            try:
+                if response.status_code >= 400:
+                    return ""
+                headers = response.headers
+                return "|".join((
+                    headers.get("ETag", "").strip(),
+                    headers.get("Last-Modified", "").strip(),
+                    headers.get("Content-Length", "").strip(),
+                )).strip("|")
+            finally:
+                response.close()
+        except requests.RequestException:
+            # Exception strings can echo the expiring signed URL, so keep logs token-free.
+            logger.info("Could not read ISO validators from Microsoft CDN; using stable URL path only")
+            return ""
+
     def get_all_versions(self) -> List[Dict]:
-        """
-        Get Windows 11 version with direct download link
-        
-        Returns:
-            List of dicts with version info and download URLs
-        """
-        logger.info("📋 Fetching Windows 11 direct download link via Playwright...")
-        
-        versions = []
-        
-        # Get direct link
+        """Return a fresh Microsoft ISO link with a stable, token-free build identity."""
+        logger.info("Fetching Windows 11 direct download link via Playwright...")
         direct_url = self.get_windows11_link()
-        
-        if direct_url:
-            # Extract version from URL if possible
-            version_match = re.search(r'(\d{2}H\d)', direct_url)
-            version = version_match.group(1) if version_match else "Latest"
-            
-            # Extract build number if present
-            build_match = re.search(r'(\d{5}\.\d+)', direct_url)
-            build_number = build_match.group(1) if build_match else "Latest"
-            
-            versions.append({
-                'version': version,
-                'title': f'Windows 11 {version}',
-                'iso_url': direct_url,
-                'source': 'microsoft_playwright',
-                'detected_date': datetime.now().isoformat(),
-                'build_number': build_number,
-                'build_id': f'msft-playwright-{version.lower()}-{datetime.now().strftime("%Y%m%d")}',
-                'architecture': 'amd64',
-                'channel': 'retail',
-                'language': 'en-us'
-            })
-            
-            logger.info(f"✅ Successfully created release entry for {version}")
-        
+        if not direct_url:
+            return []
+
+        parsed_url = urlsplit(direct_url)
+        try:
+            invalid_port = parsed_url.port not in (None, 443)
+        except ValueError:
+            invalid_port = True
+        if (
+            parsed_url.scheme != "https"
+            or parsed_url.hostname not in self.APPROVED_DOWNLOAD_HOSTS
+            or parsed_url.username is not None
+            or parsed_url.password is not None
+            or invalid_port
+            or parsed_url.fragment
+            or not parsed_url.path.lower().endswith(".iso")
+        ):
+            logger.error("Microsoft download page returned an unexpected ISO URL host or path; refusing to track it")
+            return []
+
+        # Derive version/build from the stable path only; signed query parameters
+        # never influence identity, even if a query key happens to look meaningful.
+        stable_path = unquote(parsed_url.path)
+        version_match = re.search(r"(\d{2}H\d)", stable_path, re.IGNORECASE)
+        version = version_match.group(1).upper() if version_match else "Latest"
+        # The query string is exclusively for short-lived URL authorization and is
+        # never part of the release identity or build-number extraction.
+        build_match = re.search(r"(\d{5}\.\d+|\d{5})", stable_path)
+        build_number = build_match.group(1) if build_match else "Latest"
+
+        validator = self._get_iso_validator(direct_url)
+        identity = "|".join((stable_path.casefold(), build_number, validator))
+        fingerprint = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
+        build_id = f"msft-playwright-{version.lower()}-{fingerprint}"
+
+        versions = [{
+            "version": version,
+            "title": f"Windows 11 {version}",
+            "iso_url": direct_url,
+            "source": "microsoft_playwright",
+            "detected_date": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "build_number": build_number,
+            "build_id": build_id,
+            "iso_fingerprint": validator,
+            "architecture": "amd64",
+            "channel": "retail",
+            "language": "en-us",
+        }]
+
+        logger.info("Created stable release identity for %s (%s)", version, build_id)
         return versions
 
 
@@ -291,8 +336,10 @@ def test_playwright_download():
     print()
     if link:
         print(f"✅ SUCCESS!")
-        print(f"\nDirect Download URL:")
-        print(f"{link}\n")
+        parsed = urlsplit(link)
+        safe_link = urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
+        print("\nDirect ISO path (signed query omitted):")
+        print(f"{safe_link}\n")
         
         # Verify it's a direct ISO link
         if link.lower().endswith('.iso'):
@@ -311,8 +358,8 @@ def test_playwright_download():
                 print(f"✅ ISO Size: {size_gb:.2f} GB")
             else:
                 print(f"ℹ️  Could not determine file size (link may be time-limited)")
-        except Exception as e:
-            print(f"ℹ️  Could not verify file size: {e}")
+        except Exception:
+            print("ℹ️  Could not verify file size (signed URL may have expired).")
         
     else:
         print(f"❌ FAILED to get direct download link")

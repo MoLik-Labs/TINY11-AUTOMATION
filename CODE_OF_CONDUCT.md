@@ -2,12 +2,13 @@
 
 ## Our Pledge
 
-We as members, contributors, and leaders pledge to make participation in **Tiny11 Automated** a harassment-free experience for everyone, regardless of age, body size, visible or invisible disability, ethnicity, sex characteristics, gender identity and expression, level of experience, education, socio-economic status, nationality, personal appearance, race, religion, or sexual identity and orientation.
+We as members, contributors, and leaders pledge to make participation in **TINY11-AUTOMATION** a harassment-free experience for everyone, regardless of age, body size, visible or invisible disability, ethnicity, sex characteristics, gender identity and expression, level of experience, education, socio-economic status, nationality, personal appearance, race, religion, or sexual identity and orientation.
 
 We pledge to act and interact in ways that contribute to an open, welcoming, diverse, inclusive, and healthy community.
 
-**Author**: kelexine  
-**GitHub**: https://github.com/kelexine/tiny11-automated
+**Fork maintainer**: NggKhaiz
+**GitHub**: https://github.com/NggKhaiz/TINY11-AUTOMATION
+**Credits**: kelexine (automation), ntdevlabs (original builder)
 
 ---
 
@@ -42,7 +43,7 @@ We pledge to act and interact in ways that contribute to an open, welcoming, div
 
 ### Project Maintainers
 
-Project maintainers (kelexine and approved collaborators) are responsible for:
+Project maintainers (NggKhaiz and approved collaborators) are responsible for:
 
 - Clarifying the standards of acceptable behavior
 - Taking appropriate and fair corrective action in response to unacceptable behavior
@@ -64,16 +65,11 @@ All community members are expected to:
 
 This Code of Conduct applies within all project spaces, including but not limited to:
 
-- GitHub repository (issues, PRs, discussions, code)
-- Discord server (all channels, DMs with maintainers)
-- SourceForge project page (comments, reviews)
-- Social media mentions and discussions
-- Email communications with maintainers
-- Any other official Tiny11 Automated spaces
+- GitHub repository (issues, PRs, discussions, and code)
+- Other project spaces explicitly announced by the current maintainer
 
 This Code of Conduct also applies when an individual is officially representing the project in public spaces, such as:
 
-- Using an official project email address
 - Posting via an official social media account
 - Acting as an appointed representative at events
 
@@ -85,9 +81,7 @@ This Code of Conduct also applies when an individual is officially representing 
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be reported to the project maintainer:
 
-- **Email**: frankiekelechi@gmail.com
-- **Discord DM**: kelexine
-- **GitHub**: Private message to @kelexine
+- **GitHub**: Contact the current repository maintainer privately through the repository profile.
 
 All complaints will be reviewed and investigated promptly and fairly.
 
@@ -170,7 +164,7 @@ When a report is received:
 
 If you believe you were unfairly sanctioned:
 
-1. Email frankiekelechi@gmail.com with "Appeal" in subject
+1. Contact the current maintainer privately through the repository profile with "Appeal" in the subject
 2. Explain why you believe the decision was incorrect
 3. Provide additional context or evidence
 4. Appeals reviewed within 7 days
@@ -208,7 +202,7 @@ If you believe you were unfairly sanctioned:
 
 ### Disagreements with Maintainer
 
-**If you disagree with kelexine's decisions:**
+**If you disagree with the current maintainer's decisions:**
 
 1. ✅ Ask for clarification respectfully
 2. ✅ Provide additional context or evidence
@@ -248,25 +242,25 @@ If you believe you were unfairly sanctioned:
 
 ### Great Ways to Contribute
 
-✅ **"Found a bug, here's detailed reproduction steps"**  
-✅ **"Love this project! Small typo fix in docs"**  
-✅ **"Would it make sense to add X feature? Happy to implement"**  
-✅ **"Thanks for creating this! Saved me hours"**  
-✅ **"I don't understand Y, could someone explain?"**  
+✅ **"Found a bug, here's detailed reproduction steps"**
+✅ **"Love this project! Small typo fix in docs"**
+✅ **"Would it make sense to add X feature? Happy to implement"**
+✅ **"Thanks for creating this! Saved me hours"**
+✅ **"I don't understand Y, could someone explain?"**
 
 ### Things to Avoid
 
-❌ **"This project sucks, I'm switching to Z"**  
-❌ **"Why hasn't my PR been merged yet??" (posted 1 hour after submitting)**  
-❌ **"You should add X immediately!"** (with no reasoning)  
-❌ **Repeatedly asking the same question without reading responses**  
-❌ **Opening duplicate issues without checking existing ones**  
+❌ **"This project sucks, I'm switching to Z"**
+❌ **"Why hasn't my PR been merged yet??" (posted 1 hour after submitting)**
+❌ **"You should add X immediately!"** (with no reasoning)
+❌ **Repeatedly asking the same question without reading responses**
+❌ **Opening duplicate issues without checking existing ones**
 
 ---
 
 ## Maintainer Commitments
 
-As the project maintainer, kelexine commits to:
+As the project maintainer, NggKhaiz commits to:
 
 - **Responding** to reports within 24-48 hours
 - **Being fair** and consistent in enforcement
@@ -290,7 +284,6 @@ We celebrate positive community members who:
 
 **Community Champions** may receive:
 - Recognition in release notes
-- Special Discord role
 - Mention in README
 - Eternal gratitude 🙏
 
@@ -298,16 +291,10 @@ We celebrate positive community members who:
 
 ## Updates to This Code of Conduct
 
-This Code of Conduct may be updated periodically. Changes will be:
+This Code of Conduct may be updated periodically. Changes will be committed to the repository with a clear explanation and highlighted in the README when relevant.
 
-- Committed to the repository with clear changelog
-- Announced in Discord #general
-- Highlighted in README
-- Effective immediately upon commit
-
-**Current Version**: 1.0.0  
-**Last Updated**: December 24, 2025  
-**Next Review**: June 2026
+**Current Version**: 1.0.1
+**Last Updated**: 2026-10-04
 
 ---
 
@@ -324,19 +311,17 @@ This Code of Conduct is adapted from:
 
 If you have questions about this Code of Conduct:
 
-- **Email**: frankiekelechi@gmail.com
-- **GitHub Discussion**: Start a thread in Q&A category
-- **Discord**: Ask in #general
+- **GitHub**: Start a discussion or contact the current maintainer privately through the repository profile.
 
 ---
 
 ## Final Note
 
-**Tiny11 Automated** serves **2,000+ users** worldwide. This Code of Conduct ensures our community remains welcoming, productive, and focused on delivering the best Windows customization experience possible.
+This Code of Conduct is intended to keep project participation welcoming, respectful, and focused on constructive collaboration.
 
-**Thank you for being a positive part of our community!** 🎉
+**Thank you for being a positive part of the community.**
 
 ---
 
-*For security issues, see [SECURITY.md](SECURITY.md)*  
+*For security issues, see [SECURITY.md](SECURITY.md)*
 *For contributing guidelines, see [CONTRIBUTING.md](CONTRIBUTING.md)*

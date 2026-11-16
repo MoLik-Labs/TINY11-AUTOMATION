@@ -137,7 +137,7 @@ Paste logs here
 
 ## For Maintainer Review
 
-**Checklist for @kelexine:**
+**Checklist for @NggKhaiz:**
 
 - [ ] Code quality acceptable
 - [ ] Tests pass
@@ -146,14 +146,14 @@ Paste logs here
 - [ ] No breaking changes (or properly documented)
 - [ ] Ready to merge
 
-**Deployment Plan:**
-- [ ] Merge to `main`
-- [ ] Tag new release
-- [ ] Update SourceForge
-- [ ] Discord announcement
+**Maintainer follow-up (if applicable):**
+- [ ] Merge to the repository's default branch
+- [ ] Confirm distribution docs still distinguish temporary artifacts from long-term hosting
+- [ ] Update documentation or changelog if behavior changed
+- [ ] Do not attach an ISO or claim a permanent download host without an approved distribution plan
 
 ---
 
-**Thank you for contributing to Tiny11 Automated!** 🎉
+**Thank you for contributing to TINY11-AUTOMATION!** 🎉
 
-By submitting this PR, you agree to license your contribution under the project's [MIT License](LICENSE).
+By submitting this PR, you confirm that you have the right to contribute the changes. The repository license status is documented in README.md; do not assume an MIT license.

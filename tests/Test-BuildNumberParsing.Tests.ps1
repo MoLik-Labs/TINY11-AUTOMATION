@@ -1,53 +1,105 @@
 <#
 .SYNOPSIS
-    Unit tests for Windows build-number extraction in the *-headless.ps1 builder scripts.
-    Author: kelexine (https://github.com/kelexine)
+    Pester tests for the production image-selection and build-number helpers.
+    Maintainer: NggKhaiz | automation credit: kelexine | original builder: ntdevlabs
     Run: Invoke-Pester ./tests/Test-BuildNumberParsing.Tests.ps1
 #>
 
-function Get-TestBuildNumber {
-    param([string]$FullVersion)
-    if ($FullVersion -match '(\d+\.\d+)$') {
-        return $Matches[1]
-    }
-    return ""
-}
+$modulePath = Join-Path $PSScriptRoot '..\scripts\tiny11_image_metadata.psm1'
+Import-Module $modulePath -Force
 
-Describe "Windows build number extraction" {
-
-    It "extracts <build>.<ubr> from a standard 4-segment version string" {
-        Get-TestBuildNumber -FullVersion "10.0.26200.8655" | Should -Be "26200.8655"
+Describe "Production Windows build-number parser" {
+    It "extracts build and UBR from a standard four-part Windows version" {
+        Get-Tiny11BuildNumber -FullVersion "10.0.26200.8655" | Should -Be "26200.8655"
     }
 
-    It "extracts correctly for an older Windows 11 build" {
-        Get-TestBuildNumber -FullVersion "10.0.22631.4602" | Should -Be "22631.4602"
+    It "extracts a build with a single-digit UBR" {
+        Get-Tiny11BuildNumber -FullVersion "10.0.26100.1" | Should -Be "26100.1"
     }
 
-    It "extracts correctly when the UBR is a single digit" {
-        Get-TestBuildNumber -FullVersion "10.0.26100.1" | Should -Be "26100.1"
+    It "accepts a three-part Windows version without inventing a UBR" {
+        Get-Tiny11BuildNumber -FullVersion "10.0.26100" | Should -Be "26100"
     }
 
-    It "matches the whole string for a bare 2-segment version" {
-        # Anchored only at the end, so "10.0" is itself a valid \d+\.\d+ match.
-        # Not expected in practice (Get-WindowsImage.Version is always 4-segment).
-        Get-TestBuildNumber -FullVersion "10.0" | Should -Be "10.0"
+    It "accepts a verified build label already in build-number form" {
+        Get-Tiny11BuildNumber -FullVersion "26200.8655" | Should -Be "26200.8655"
     }
 
-    It "returns an empty string for a completely empty version" {
-        Get-TestBuildNumber -FullVersion "" | Should -Be ""
+    It "returns an empty string for an empty version" {
+        Get-Tiny11BuildNumber -FullVersion "" | Should -Be ""
     }
 
-    It "returns an empty string for non-numeric garbage" {
-        Get-TestBuildNumber -FullVersion "not-a-version" | Should -Be ""
+    It "returns an empty string for a null version" {
+        Get-Tiny11BuildNumber -FullVersion $null | Should -Be ""
     }
 
-    It "is resilient to a trailing 5th segment by still capturing the last two" {
-        Get-TestBuildNumber -FullVersion "10.0.26200.8655.1" | Should -Be "8655.1"
+    It "rejects malformed versions instead of mislabeling their last two components" {
+        Get-Tiny11BuildNumber -FullVersion "10.0.26200.8655.1" | Should -Be ""
+        Get-Tiny11BuildNumber -FullVersion "not-a-version" | Should -Be ""
+        Get-Tiny11BuildNumber -FullVersion "10.0" | Should -Be ""
     }
 }
 
-Describe "Consistency across all three maker scripts" {
+Describe "Production source-image selection" {
+    $images = @(
+        [pscustomobject]@{ ImageIndex = 1; ImageName = "Windows 11 Home" },
+        [pscustomobject]@{ ImageIndex = 4; ImageName = "Windows 11 Education" },
+        [pscustomobject]@{ ImageIndex = 6; ImageName = "Windows 11 Pro" }
+    )
 
+    It "selects Pro by exact image name when the source index is automatic" {
+        $selection = Select-Tiny11SourceImage -Images $images -RequestedIndex 0 -Edition Pro -ImagePath "fixture.wim"
+        $selection.ImageIndex | Should -Be 6
+        $selection.Image.ImageName | Should -Be "Windows 11 Pro"
+    }
+
+    It "selects Home by actual image name even when its source index is not assumed" {
+        $selection = Select-Tiny11SourceImage -Images $images -RequestedIndex 0 -Edition Home -ImagePath "fixture.wim"
+        $selection.ImageIndex | Should -Be 1
+        $selection.Image.ImageName | Should -Be "Windows 11 Home"
+    }
+
+    It "uses an explicitly verified index and returns the actual image metadata" {
+        $selection = Select-Tiny11SourceImage -Images $images -RequestedIndex 4 -Edition Pro -ImagePath "fixture.wim"
+        $selection.ImageIndex | Should -Be 4
+        $selection.Image.ImageName | Should -Be "Windows 11 Education"
+    }
+
+    It "fails clearly when the requested edition is absent" {
+        $message = ""
+        try {
+            Select-Tiny11SourceImage -Images $images -RequestedIndex 0 -Edition Enterprise -ImagePath "fixture.wim"
+        } catch {
+            $message = $_.Exception.Message
+        }
+        $message | Should -Match "Could not uniquely select 'Windows 11 Enterprise'"
+        $message | Should -Match "Index 6: Windows 11 Pro"
+    }
+
+    It "fails clearly when an explicit index is absent" {
+        $message = ""
+        try {
+            Select-Tiny11SourceImage -Images $images -RequestedIndex 99 -Edition Pro -ImagePath "fixture.wim"
+        } catch {
+            $message = $_.Exception.Message
+        }
+        $message | Should -Match "Image index 99 did not resolve"
+        $message | Should -Match "Index 4: Windows 11 Education"
+    }
+
+    It "fails rather than choosing ambiguously when the same edition name appears twice" {
+        $duplicateImages = $images + [pscustomobject]@{ ImageIndex = 10; ImageName = "Windows 11 Pro" }
+        $message = ""
+        try {
+            Select-Tiny11SourceImage -Images $duplicateImages -RequestedIndex 0 -Edition Pro -ImagePath "fixture.wim"
+        } catch {
+            $message = $_.Exception.Message
+        }
+        $message | Should -Match "Could not uniquely select 'Windows 11 Pro'"
+    }
+}
+
+Describe "All builders use the production metadata module" {
     $repoRoot = Split-Path -Parent $PSScriptRoot
     $scripts = @(
         "$repoRoot\scripts\tiny11maker-headless.ps1",
@@ -58,85 +110,18 @@ Describe "Consistency across all three maker scripts" {
     foreach ($scriptPath in $scripts) {
         $scriptName = Split-Path -Leaf $scriptPath
 
-        It "$scriptName contains the build-number capture block" {
-            Test-Path $scriptPath | Should -Be $true
+        It "$scriptName imports and calls the shared production helpers" {
             $content = Get-Content -Path $scriptPath -Raw
-            $content | Should -Match ([regex]::Escape('$script:DetectedBuildNumber'))
-            $content | Should -Match ([regex]::Escape("'(\d+\.\d+)$'"))
-        }
-
-        It "$scriptName defines Write-BuildInfo" {
-            $content = Get-Content -Path $scriptPath -Raw
+            $content | Should -Match ([regex]::Escape("Import-Module (Join-Path `$PSScriptRoot 'tiny11_image_metadata.psm1')"))
+            $content | Should -Match "Select-Tiny11SourceImage"
+            $content | Should -Match "Get-Tiny11BuildNumber"
             $content | Should -Match "function Write-BuildInfo"
         }
-    }
-}
 
-Describe "Regression: basic image list object has no 'Version' property" {
-    # kelexine: 'Get-WindowsImage -ImagePath $x' (no -Index) returns the basic
-    # list object (ImageIndex/ImageName/ImageDescription/ImageSize only). Under
-    # Set-StrictMode -Version Latest, reading .Version off that object throws
-    # "The property 'Version' cannot be found on this object." This regressed
-    # a real CI run (nano11, index 6, Pro) - see commit fixing this file.
-
-    $repoRoot = Split-Path -Parent $PSScriptRoot
-    $scripts = @(
-        "$repoRoot\scripts\tiny11maker-headless.ps1",
-        "$repoRoot\scripts\tiny11coremaker-headless.ps1",
-        "$repoRoot\scripts\nano11builder-headless.ps1"
-    )
-
-    foreach ($scriptPath in $scripts) {
-        $scriptName = Split-Path -Leaf $scriptPath
-        $content = Get-Content -Path $scriptPath -Raw
-
-        It "$scriptName does not read .Version directly off the basic list object" {
-            # The buggy pattern: assigning DetectedFullVersion straight from
-            # $selectedImage (the Where-Object-filtered list entry).
-            $content | Should -Not -Match ([regex]::Escape('$script:DetectedFullVersion = $selectedImage.Version'))
-        }
-
-        It "$scriptName re-queries Get-WindowsImage with -Index for the detailed object" {
+        It "$scriptName queries detailed metadata by the selected index" {
+            $content = Get-Content -Path $scriptPath -Raw
             $content | Should -Match ([regex]::Escape('Get-WindowsImage -ImagePath $sourceImagePath -Index $script:INDEX'))
-        }
-
-        It "$scriptName guards the detailed re-query in a try/catch so a DISM failure can't hard-crash the build" {
-            $pattern = '(?s)try\s*\{[^}]*Get-WindowsImage -ImagePath \$sourceImagePath -Index \$script:INDEX.*?\}\s*catch\s*\{'
-            $content | Should -Match $pattern
-        }
-
-        It "$scriptName verifies the 'Version' property exists before reading it" {
             $content | Should -Match ([regex]::Escape("PSObject.Properties.Match('Version')"))
         }
-    }
-
-    It "simulated fix: detailed per-index object exposes Version, basic list object does not" {
-        # Mirrors the real DISM cmdlet shapes without requiring DISM/Windows.
-        function Get-WindowsImage {
-            param([string]$ImagePath, [int]$Index)
-            if ($PSBoundParameters.ContainsKey('Index')) {
-                return [pscustomobject]@{
-                    ImageIndex = $Index
-                    ImageName  = "Windows 11 Pro"
-                    Version    = "10.0.26200.8655"
-                }
-            }
-            return @([pscustomobject]@{
-                ImageIndex = 6
-                ImageName  = "Windows 11 Pro"
-                # Intentionally no Version property - matches real DISM basic list output.
-            })
-        }
-
-        $images = Get-WindowsImage -ImagePath "fake.esd"
-        $selectedImage = $images | Where-Object { $_.ImageIndex -eq 6 }
-
-        # The bug: this property genuinely does not exist on the basic object.
-        $selectedImage.PSObject.Properties.Match('Version').Count | Should -Be 0
-
-        # The fix: re-querying with -Index returns an object that does have it.
-        $detailedImage = Get-WindowsImage -ImagePath "fake.esd" -Index 6
-        $detailedImage.PSObject.Properties.Match('Version').Count | Should -Be 1
-        $detailedImage.Version | Should -Be "10.0.26200.8655"
     }
 }

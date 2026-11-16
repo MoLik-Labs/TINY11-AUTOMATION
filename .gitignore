@@ -28,9 +28,12 @@ scripts/nano11.iso
 # Checksums and Verification Files (generated artifacts)
 *.sha256
 *.md5
-# Ignore all txt files except requirements.txt
+# Ignore generated text files but keep dependency manifests
 *.txt
 !requirements.txt
+!requirements-common.txt
+!requirements-playwright.txt
+!requirements-dev.txt
 
 # OS Generated
 .DS_Store

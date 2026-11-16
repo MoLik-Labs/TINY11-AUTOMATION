@@ -1,6 +1,6 @@
 # tests/test_discord_notify.py
 # Unit and integration tests for Discord notification system
-# Author: kelexine (https://github.com/kelexine)
+# Maintainer: NggKhaiz | automation credit: kelexine | original builder: ntdevlabs
 
 import json
 import os
@@ -114,6 +114,20 @@ class TestSanitizeError:
         result = DiscordNotifier._sanitize_error("e" * 1000)
         assert "truncated" not in result
 
+    def test_redacts_signed_microsoft_iso_query(self):
+        url = 'https://software.download.prss.microsoft.com/dbazure/Win11.iso?t=secret&P1=expiry'
+        result = DiscordNotifier._sanitize_error(f'download failed: {url}')
+        assert 'secret' not in result
+        assert 'P1=expiry' not in result
+        assert '<signed-query-redacted>' in result
+
+    def test_redacts_query_tokens_from_custom_iso_hosts(self):
+        url = 'https://files.example.net/Win11.iso?token=private&signature=secret'
+        result = DiscordNotifier._sanitize_error(f'download failed: {url}')
+        assert 'token=private' not in result
+        assert 'signature=secret' not in result
+        assert 'https://files.example.net/Win11.iso?<signed-query-redacted>' in result
+
 
 # ---------------------------------------------------------------------------
 # _next_weekly_check
@@ -203,6 +217,12 @@ class TestBuildExtraFields:
         dotnet = next(f for f in fields if f['name'] == '.NET 3.5')
         assert '❌' in dotnet['value']
 
+    def test_hardware_requirement_bypass_is_clearly_reported(self):
+        enabled = _build_extra_fields({'bypass_hardware_requirements': 'true'})
+        disabled = _build_extra_fields({'bypass_hardware_requirements': 'false'})
+        assert 'testing' in next(f for f in enabled if f['name'] == 'Hardware checks')['value']
+        assert 'Default checks retained' in next(f for f in disabled if f['name'] == 'Hardware checks')['value']
+
     def test_both_fields_present(self):
         fields = _build_extra_fields({'preserve_winre': 'true', 'enable_dotnet35': 'false'})
         assert fields is not None
@@ -215,6 +235,16 @@ class TestBuildExtraFields:
 
     def test_unknown_keys_silently_ignored(self):
         assert _build_extra_fields({'some_future_key': 'value'}) is None
+
+    def test_temporary_distribution_status_is_surfaced(self):
+        fields = _build_extra_fields({'distribution': 'Temporary GitHub Actions artifact (7-day retention); no permanent host configured'})
+        assert fields is not None
+        distribution = next(f for f in fields if f['name'] == '📦 Distribution')
+        assert '7-day retention' in distribution['value']
+
+    def test_distribution_field_does_not_carry_urls(self):
+        fields = _build_extra_fields({'distribution': 'https://software.download.prss.microsoft.com/dbazure/Win11.iso?t=secret'})
+        assert fields is None
 
     def test_windows_build_present(self):
         fields = _build_extra_fields({'windows_build': '26200.8655'})
@@ -329,10 +359,20 @@ class TestNotifyBuildCompleted:
         mock_post.return_value = _ok_response()
         _make_notifier().notify_build_completed(
             "25H2", "Nano", "Home", "42m", "3.20 GB",
-            "https://sourceforge.net/projects/tiny-11-releases/"
+            "https://github.com/NggKhaiz/TINY11-AUTOMATION/actions/runs/1"
         )
         fields = mock_post.call_args[1]['json']['embeds'][0]['fields']
-        assert any(f['name'] == '📥 Download' for f in fields)
+        assert any(f['name'] == '📥 Download' and 'Temporary GitHub Actions artifact' in f['value'] for f in fields)
+
+    @patch('requests.post')
+    def test_signed_microsoft_url_is_not_added_as_download(self, mock_post):
+        mock_post.return_value = _ok_response()
+        _make_notifier().notify_build_completed(
+            "25H2", "Standard", "Pro", "42m", "3.20 GB",
+            "https://software.download.prss.microsoft.com/dbazure/Win11.iso?t=secret"
+        )
+        fields = mock_post.call_args[1]['json']['embeds'][0]['fields']
+        assert not any(f['name'] == '📥 Download' for f in fields)
 
     @patch('requests.post')
     def test_winre_and_dotnet_fields_surfaced(self, mock_post):
@@ -358,7 +398,7 @@ class TestNotifyBuildFailed:
         _make_notifier().notify_build_failed(
             "25H2", "Nano", "Home",
             "error with ```block```",
-            "https://github.com/kelexine/tiny11-automated/actions/runs/1"
+            "https://github.com/NggKhaiz/TINY11-AUTOMATION/actions/runs/1"
         )
         error_field = next(
             f for f in mock_post.call_args[1]['json']['embeds'][0]['fields']
@@ -383,6 +423,17 @@ class TestNotifyBuildFailed:
         fields = mock_post.call_args[1]['json']['embeds'][0]['fields']
         assert not any(f['name'] == 'Ran for' for f in fields)
 
+    @patch('requests.post')
+    def test_hardware_bypass_status_included_on_failure(self, mock_post):
+        mock_post.return_value = _ok_response()
+        extra_fields = _build_extra_fields({'bypass_hardware_requirements': 'true'})
+        _make_notifier().notify_build_failed(
+            "25H2", "Nano", "Pro", "err", "https://x.com", extra_fields=extra_fields
+        )
+        fields = mock_post.call_args[1]['json']['embeds'][0]['fields']
+        hardware_status = next(f for f in fields if f['name'] == 'Hardware checks')
+        assert 'testing' in hardware_status['value'].lower()
+
 
 # ---------------------------------------------------------------------------
 # notify_daily_summary
@@ -398,12 +449,12 @@ class TestNotifyDailySummary:
         assert '100.0%' in rate['value']
 
     @patch('requests.post')
-    def test_100_percent_when_no_builds(self, mock_post):
+    def test_no_success_rate_when_no_builds(self, mock_post):
         mock_post.return_value = _ok_response()
         _make_notifier().notify_daily_summary(5, 0, 0, 0)
         fields = mock_post.call_args[1]['json']['embeds'][0]['fields']
         rate = next(f for f in fields if f['name'] == '📊 Success Rate')
-        assert '100.0%' in rate['value']
+        assert 'N/A' in rate['value']
 
     @patch('requests.post')
     def test_next_check_is_dynamic(self, mock_post):
@@ -519,7 +570,7 @@ class TestMain:
             '--data', json.dumps({
                 'version': '25H2', 'build_type': 'Nano', 'edition': 'Home',
                 'error': 'CommandNotFoundException: Remove-RegistryValue',
-                'logs_url': 'https://github.com/kelexine/tiny11-automated/actions/runs/1'
+                'logs_url': 'https://github.com/NggKhaiz/TINY11-AUTOMATION/actions/runs/1'
             })
         ])
         assert main() == 0

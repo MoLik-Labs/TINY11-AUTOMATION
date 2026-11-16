@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Discord Notification System for Tiny11 Builds
-Author: kelexine (https://github.com/kelexine)
+Maintainer: NggKhaiz | automation credit: kelexine | original builder: ntdevlabs
 """
 
 import os
@@ -14,6 +14,7 @@ from typing import Dict, List, Optional
 
 import requests
 import re
+from urllib.parse import urlsplit
 
 # Discord embed field values are capped at 1024 chars and the whole
 # embed at 6000. Keep generous margins below those hard limits.
@@ -61,6 +62,14 @@ class DiscordNotifier:
             return "No error details captured."
         # Triple backticks would prematurely close the code block; neutralize them.
         cleaned = error.replace('```', "'''").strip()
+        # Custom direct links can use any approved public host. Redact query
+        # strings generically so expiring access tokens never reach Discord.
+        cleaned = re.sub(
+            r'(https?://[^\s?<>`]+)\?[^\s<>`]+',
+            r'\1?<signed-query-redacted>',
+            cleaned,
+            flags=re.IGNORECASE,
+        )
         if len(cleaned) > MAX_ERROR_LENGTH:
             cleaned = cleaned[:MAX_ERROR_LENGTH].rstrip() + "\n... (truncated, see full logs)"
         return cleaned
@@ -102,8 +111,8 @@ class DiscordNotifier:
             'color': self.COLORS.get(color, self.COLORS['info']),
             'timestamp': datetime.now(timezone.utc).isoformat(),
             'footer': {
-                'text': 'Tiny11 Automated Builder • kelexine',
-                'icon_url': 'https://avatars.githubusercontent.com/u/70432347'
+                'text': 'TINY11-AUTOMATION • NggKhaiz (automation: kelexine; original: ntdevlabs)',
+                'icon_url': 'https://github.com/NggKhaiz.png'
             }
         }
 
@@ -117,8 +126,8 @@ class DiscordNotifier:
             embed['image'] = {'url': image}
 
         payload = {
-            'username': 'Tiny11 Builder',
-            'avatar_url': 'https://raw.githubusercontent.com/kelexine/tiny11-automated/main/.github/assets/bot-avatar.png',
+            'username': 'TINY11-AUTOMATION',
+            'avatar_url': 'https://github.com/NggKhaiz.png',
             'embeds': [embed]
         }
 
@@ -178,8 +187,8 @@ class DiscordNotifier:
                 'inline': False
             },
             {
-                'name': '🏗️ Builds Queued',
-                'value': f'{len(releases) * 6} total builds (Standard, Core, Nano × Home, Pro)',
+                'name': '🏗️ Build Jobs Available',
+                'value': f'{len(releases) * 4} possible jobs (Standard/Core × Home/Pro); detection does not dispatch by default',
                 'inline': True
             },
             {
@@ -247,11 +256,24 @@ class DiscordNotifier:
             fields.extend(extra_fields)
 
         if download_url:
-            fields.append({
-                'name': '📥 Download',
-                'value': f'[SourceForge]({download_url})',
-                'inline': False
-            })
+            try:
+                parsed_download_url = urlsplit(download_url)
+                is_actions_run = (
+                    parsed_download_url.scheme == 'https'
+                    and parsed_download_url.hostname == 'github.com'
+                    and '/actions/runs/' in parsed_download_url.path
+                    and not parsed_download_url.username
+                    and not parsed_download_url.password
+                )
+            except ValueError:
+                is_actions_run = False
+
+            if is_actions_run:
+                fields.append({
+                    'name': '📥 Download',
+                    'value': f'[Temporary GitHub Actions artifact]({download_url})',
+                    'inline': False
+                })
 
         return self.send_embed(
             title='✅ Build Completed Successfully!',
@@ -267,7 +289,8 @@ class DiscordNotifier:
         edition: str,
         error: str,
         logs_url: str,
-        duration: Optional[str] = None
+        duration: Optional[str] = None,
+        extra_fields: Optional[List[Dict]] = None
     ) -> bool:
         """Notify when a build fails"""
 
@@ -277,6 +300,8 @@ class DiscordNotifier:
             {'name': 'Edition', 'value': edition, 'inline': True},
         ]
 
+        if extra_fields:
+            fields.extend(extra_fields)
         if duration:
             fields.append({'name': 'Ran for', 'value': duration, 'inline': True})
 
@@ -308,14 +333,14 @@ class DiscordNotifier:
         """Send periodic build/check statistics summary"""
 
         total_builds = builds_completed + builds_failed
-        success_rate = (builds_completed / total_builds * 100) if total_builds else 100.0
+        success_rate = f'{builds_completed / total_builds * 100:.1f}%' if total_builds else 'N/A (no builds)'
 
         fields = [
             {'name': '🔍 Checks Performed', 'value': str(checks_today), 'inline': True},
             {'name': '🆕 New Releases', 'value': str(new_releases), 'inline': True},
             {'name': '✅ Builds Completed', 'value': str(builds_completed), 'inline': True},
             {'name': '❌ Builds Failed', 'value': str(builds_failed), 'inline': True},
-            {'name': '📊 Success Rate', 'value': f'{success_rate:.1f}%', 'inline': True},
+            {'name': '📊 Success Rate', 'value': success_rate, 'inline': True},
             {'name': '⏰ Next Check', 'value': self._next_weekly_check(), 'inline': True}
         ]
 
@@ -336,7 +361,7 @@ class DiscordNotifier:
 
         fields = [
             {'name': '🚀 Triggered Builds', 'value': str(builds_count), 'inline': True},
-            {'name': 'targets', 'value': 'Standard, Core, Nano (Home & Pro)', 'inline': True},
+            {'name': 'Targets', 'value': 'Standard/Core × Home/Pro; Nano is disabled by default', 'inline': True},
             {'name': 'For Releases', 'value': self._truncate(release_text) if release_text else "No release info", 'inline': False}
         ]
 
@@ -364,6 +389,8 @@ def _build_extra_fields(data: Dict) -> Optional[List[Dict]]:
       - windows_build   → 'Build' field (real detected Windows build number)
       - preserve_winre  → 'WinRE' field (Core / Nano builds)
       - enable_dotnet35 → '.NET 3.5' field (Core builds)
+      - bypass_hardware_requirements → explicit unsupported-hardware testing setting
+      - distribution    → non-URL artifact/hosting status text
 
     Unknown keys are silently ignored so future callers can extend the payload
     without touching this function.
@@ -381,7 +408,7 @@ def _build_extra_fields(data: Dict) -> Optional[List[Dict]]:
         val = str(data['preserve_winre']).lower()
         fields.append({
             'name': 'WinRE',
-            'value': '✅ Preserved' if val == 'true' else '❌ Removed (stub)',
+            'value': '✅ Preserved' if val == 'true' else '❌ Removed (VM/Lab only)',
             'inline': True
         })
 
@@ -392,6 +419,25 @@ def _build_extra_fields(data: Dict) -> Optional[List[Dict]]:
             'value': '✅ Enabled' if val == 'true' else '❌ Disabled',
             'inline': True
         })
+
+    if 'bypass_hardware_requirements' in data and data['bypass_hardware_requirements'] is not None:
+        val = str(data['bypass_hardware_requirements']).lower()
+        fields.append({
+            'name': 'Hardware checks',
+            'value': '⚠️ Bypasses enabled for testing' if val == 'true' else '✅ Default checks retained',
+            'inline': True
+        })
+
+    if data.get('distribution'):
+        distribution = str(data['distribution']).strip()
+        # Distribution text may describe storage, but must never turn into a URL
+        # carrier for expiring signed Microsoft links.
+        if distribution and not re.search(r'https?://', distribution, re.IGNORECASE):
+            fields.append({
+                'name': '📦 Distribution',
+                'value': DiscordNotifier._truncate(distribution, limit=500),
+                'inline': False
+            })
 
     return fields if fields else None
 
@@ -432,7 +478,7 @@ def main():
 
     # Coerce known embed fields to strings so Discord doesn't 400 on numeric values
     if isinstance(data, dict):
-        for k in ('version', 'build_type', 'edition', 'duration', 'iso_size', 'error', 'logs_url', 'windows_build'):
+        for k in ('version', 'build_type', 'edition', 'duration', 'iso_size', 'error', 'logs_url', 'windows_build', 'distribution', 'bypass_hardware_requirements'):
             if k in data and data[k] is not None:
                 data[k] = str(data[k])
 
@@ -471,7 +517,8 @@ def main():
             _require(data, 'version', 'build_type', 'edition', 'error', 'logs_url')
             success = notifier.notify_build_failed(
                 data['version'], data['build_type'], data['edition'],
-                data['error'], data['logs_url'], data.get('duration')
+                data['error'], data['logs_url'], data.get('duration'),
+                extra_fields=_build_extra_fields(data)
             )
 
         elif args.type == 'daily-summary':

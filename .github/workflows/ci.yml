@@ -1,0 +1,113 @@
+name: Repository validation
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: repository-validation-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python-and-config:
+    name: Python tests and configuration validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-common.txt
+            requirements-playwright.txt
+            requirements-dev.txt
+
+      - name: Install pinned dependencies
+        run: python -m pip install -r requirements-dev.txt
+
+      - name: Run Python tests
+        run: python -m pytest -q
+
+      - name: Compile Python sources
+        run: python -m compileall -q scripts tests
+
+      - name: Validate repository configuration files
+        run: python scripts/validate_repo_files.py
+
+  github-actions-lint:
+    name: GitHub Actions workflow lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Download checksum-pinned actionlint
+        shell: bash
+        run: |
+          archive="$RUNNER_TEMP/actionlint.tar.gz"
+          curl --fail --silent --show-error --location --output "$archive" \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz
+          printf '%s  %s\n' '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8' "$archive" | sha256sum --check
+          tar -xzf "$archive" -C "$RUNNER_TEMP" actionlint
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
+      - name: Lint workflows and expressions
+        run: actionlint -color
+
+  powershell-syntax:
+    name: PowerShell syntax validation
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Parse PowerShell scripts and tests
+        shell: pwsh
+        run: |
+          $files = @(
+            Get-ChildItem -Path scripts -Filter '*.ps1' -File -Recurse
+            Get-ChildItem -Path scripts -Filter '*.psm1' -File -Recurse
+            Get-ChildItem -Path tests -Filter '*.ps1' -File -Recurse
+          )
+          $parseFailures = @()
+
+          foreach ($file in $files) {
+            $tokens = $null
+            $parseErrors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              $file.FullName,
+              [ref]$tokens,
+              [ref]$parseErrors
+            ) | Out-Null
+
+            foreach ($parseError in $parseErrors) {
+              $parseFailures += "$($file.Name): $($parseError.Message) at line $($parseError.Extent.StartLineNumber)"
+            }
+          }
+
+          if ($parseFailures.Count -gt 0) {
+            $parseFailures | ForEach-Object { Write-Host ("::error::{0}" -f $_) }
+            throw "PowerShell syntax validation failed for $($parseFailures.Count) error(s)."
+          }
+
+          Write-Output "Parsed $($files.Count) PowerShell file(s) without syntax errors."
+
+      - name: Run production metadata helper tests with Pester
+        shell: pwsh
+        run: |
+          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+          Install-Module -Name Pester -RequiredVersion 5.7.1 -Scope CurrentUser -Force -SkipPublisherCheck
+          Import-Module Pester -RequiredVersion 5.7.1
+          Invoke-Pester -Path tests/Test-BuildNumberParsing.Tests.ps1 -Output Detailed

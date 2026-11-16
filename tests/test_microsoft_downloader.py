@@ -1,6 +1,6 @@
 # tests/test_microsoft_downloader.py
 # Unit and integration tests for Microsoft Direct Downloader
-# Author: kelexine (https://github.com/kelexine)
+# Maintainer: NggKhaiz | automation credit: kelexine | original builder: ntdevlabs
 
 import os
 import sys
@@ -192,6 +192,18 @@ class TestMicrosoftPlaywrightDownloader:
         assert link is None
         mock_browser.close.assert_not_called()  # Inside enter block browser could remain open on unhandled or handled
 
+    @patch('microsoft_direct_downloader.sync_playwright')
+    def test_browser_exception_does_not_log_signed_url(self, mock_sync_playwright, caplog):
+        secret_url = "https://software.download.prss.microsoft.com/file.iso?signature=private-token"
+        mock_playwright = MagicMock()
+        mock_sync_playwright.return_value.__enter__.return_value = mock_playwright
+        mock_page = mock_playwright.chromium.launch.return_value.new_context.return_value.new_page.return_value
+        mock_page.goto.side_effect = RuntimeError(secret_url)
+
+        assert MicrosoftPlaywrightDownloader().get_windows11_link() is None
+        assert "private-token" not in caplog.text
+        assert "signature=private" not in caplog.text
+
     def test_get_all_versions_parsing(self):
         """Test extraction of version and build number details from a valid download URL"""
         downloader = MicrosoftPlaywrightDownloader()
@@ -199,10 +211,11 @@ class TestMicrosoftPlaywrightDownloader:
         # Mock get_windows11_link to return a dynamic ISO download URL containing 25H2 and build numbers
         mock_iso_url = (
             "https://software.download.prss.microsoft.com/dbazure/"
-            "Win11_25H2_English_x64_v2.iso?t=64d33240&build=26100.1742"
+            "Win11_25H2_26100.1742_English_x64_v2.iso?t=64d33240"
         )
         
-        with patch.object(downloader, 'get_windows11_link', return_value=mock_iso_url):
+        with patch.object(downloader, 'get_windows11_link', return_value=mock_iso_url), \
+                patch.object(downloader, '_get_iso_validator', return_value='"etag-1"|Wed, 01 Oct 2026 00:00:00 GMT|123456789'):
             versions = downloader.get_all_versions()
             
             assert len(versions) == 1
@@ -212,3 +225,50 @@ class TestMicrosoftPlaywrightDownloader:
             assert entry['iso_url'] == mock_iso_url
             assert entry['architecture'] == 'amd64'
             assert entry['source'] == 'microsoft_playwright'
+            assert entry['build_id'].startswith('msft-playwright-25h2-')
+            assert entry['iso_fingerprint'].startswith('"etag-1"')
+
+    def test_stable_build_id_ignores_expiring_signed_query(self):
+        downloader = MicrosoftPlaywrightDownloader()
+        url_a = 'https://software.download.prss.microsoft.com/dbazure/Win11_25H2_English_x64_v2.iso?build=26100.1742&t=short-a&P1=old'
+        url_b = 'https://software.download.prss.microsoft.com/dbazure/Win11_25H2_English_x64_v2.iso?build=99999.9&t=short-b&P1=new'
+
+        with patch.object(downloader, 'get_windows11_link', side_effect=[url_a, url_b]), \
+                patch.object(downloader, '_get_iso_validator', return_value='etag|last-modified|123'):
+            first = downloader.get_all_versions()[0]
+            second = downloader.get_all_versions()[0]
+
+        assert first['build_id'] == second['build_id']
+        assert first['iso_url'] != second['iso_url']
+        assert first['build_number'] == second['build_number'] == 'Latest'
+
+    def test_changed_remote_validator_creates_new_build_id(self):
+        downloader = MicrosoftPlaywrightDownloader()
+        url = 'https://software.download.prss.microsoft.com/dbazure/Win11_25H2_English_x64_v2.iso?t=short'
+
+        with patch.object(downloader, 'get_windows11_link', return_value=url), \
+                patch.object(downloader, '_get_iso_validator', side_effect=['etag-old', 'etag-new']):
+            first = downloader.get_all_versions()[0]
+            second = downloader.get_all_versions()[0]
+
+        assert first['build_id'] != second['build_id']
+
+
+    def test_rejects_microsoft_host_with_userinfo_or_unapproved_port(self):
+        downloader = MicrosoftPlaywrightDownloader()
+        unsafe_urls = [
+            'https://user:password@software.download.prss.microsoft.com/dbazure/Win11_25H2_x64.iso',
+            'https://software.download.prss.microsoft.com:8443/dbazure/Win11_25H2_x64.iso',
+        ]
+        for unsafe_url in unsafe_urls:
+            with patch.object(downloader, 'get_windows11_link', return_value=unsafe_url), \
+                    patch.object(downloader, '_get_iso_validator') as validator:
+                assert downloader.get_all_versions() == []
+                validator.assert_not_called()
+
+    def test_rejects_non_microsoft_iso_url(self):
+        downloader = MicrosoftPlaywrightDownloader()
+        with patch.object(downloader, 'get_windows11_link', return_value='https://example.invalid/Win11_25H2_x64.iso'), \
+                patch.object(downloader, '_get_iso_validator') as validator:
+            assert downloader.get_all_versions() == []
+        validator.assert_not_called()

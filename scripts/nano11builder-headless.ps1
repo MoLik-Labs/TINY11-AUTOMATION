@@ -11,7 +11,13 @@
     Drive letter of the mounted Windows 11 ISO (required, e.g., E)
 
 .PARAMETER INDEX
-    Windows image index to process (required, e.g., 1 for Home, 6 for Pro)
+    Windows image index to process; 0 selects the requested edition by exact image name (default Pro). Pass an explicit index only after reviewing Get-WindowsImage output.
+
+.PARAMETER Edition
+    Edition to select by actual image name when INDEX is 0 (default Pro).
+
+.PARAMETER BypassHardwareRequirements
+    Add Windows Setup hardware-check bypasses and hide unsupported-hardware notifications. Disabled unless explicitly requested; testing only.
 
 .PARAMETER SCRATCH
     Drive letter for scratch disk operations (optional, defaults to script root)
@@ -20,16 +26,13 @@
     Skip cleanup of temporary files after ISO creation (optional, for debugging)
 
 .EXAMPLE
-    .\nano11builder-headless.ps1 -ISO E -INDEX 1
-    .\nano11builder-headless.ps1 -ISO E -INDEX 6 -SCRATCH D -SkipCleanup
+    .\nano11builder-headless.ps1 -ISO E -INDEX 0 -Edition Pro
+    .\nano11builder-headless.ps1 -ISO E -INDEX 0 -Edition Home -SCRATCH D -SkipCleanup
 
 .NOTES
-    Original Author: ntdevlabs
-    Modified by: kelexine (https://github.com/kelexine)
-    GitHub: https://github.com/kelexine/tiny11-automated
-    Date: 2025-12-13
-
-    License: MIT
+    Original builder: ntdevlabs (https://github.com/ntdevlabs/tiny11builder)
+    Headless automation credit: kelexine (https://github.com/kelexine)
+    Current fork maintainer: NggKhaiz (https://github.com/NggKhaiz/TINY11-AUTOMATION)
     This is a headless automation-ready version designed for CI/CD pipelines.
 #>
 
@@ -40,9 +43,16 @@ param (
     [ValidatePattern('^[c-zC-Z]$')]
     [string]$ISO,
 
-    [Parameter(Mandatory=$true, HelpMessage="Windows image index (1=Home, 6=Pro, etc.)")]
-    [ValidateRange(1, 10)]
-    [int]$INDEX,
+    [Parameter(Mandatory=$false, HelpMessage="Windows image index; use 0 to select the requested edition by its actual image name")]
+    [ValidateRange(0, 2147483647)]
+    [int]$INDEX = 0,
+
+    [Parameter(Mandatory=$false, HelpMessage="Edition to select when INDEX is 0")]
+    [ValidateSet('Home', 'Pro', 'Education', 'Enterprise')]
+    [string]$Edition = 'Pro',
+
+    [Parameter(Mandatory=$false, HelpMessage="Add Windows Setup hardware-check bypasses for testing only; disabled by default")]
+    [switch]$BypassHardwareRequirements,
 
     [Parameter(Mandatory=$false, HelpMessage="Scratch disk drive letter (defaults to script directory)")]
     [ValidatePattern('^[c-zC-Z]$')]
@@ -58,6 +68,7 @@ param (
 #---------[ Error Handling ]---------#
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
+Import-Module (Join-Path $PSScriptRoot 'tiny11_image_metadata.psm1') -Force -ErrorAction Stop
 
 #---------[ Configuration ]---------#
 if (-not $SCRATCH) {
@@ -222,64 +233,33 @@ function Copy-WindowsFiles {
 }
 
 function Resolve-ImageIndex {
-    Write-Log "Resolving and validating image index $INDEX..."
-    
-    $sourceImagePath = ""
-    if (Test-Path "$DriveLetter\sources\install.wim") {
-        $sourceImagePath = "$DriveLetter\sources\install.wim"
+    $sourceImagePath = if (Test-Path "$DriveLetter\sources\install.wim") {
+        "$DriveLetter\sources\install.wim"
     } elseif (Test-Path "$DriveLetter\sources\install.esd") {
-        $sourceImagePath = "$DriveLetter\sources\install.esd"
+        "$DriveLetter\sources\install.esd"
     } else {
         throw "Windows installation files not found on ISO"
     }
-    
-    $images = Get-WindowsImage -ImagePath $sourceImagePath
-    
-    # Standard Microsoft index mapping for Consumer ISOs
-    $expectedNames = @{
-        1 = "Windows 11 Home"
-        4 = "Windows 11 Education"
-        6 = "Windows 11 Pro"
-        7 = "Windows 11 Pro N"
+
+    $images = @(Get-WindowsImage -ImagePath $sourceImagePath)
+    if ($images.Count -eq 0) {
+        throw "No Windows images were found in $sourceImagePath"
     }
-    
-    $targetName = $expectedNames[$INDEX]
-    
-    if ($targetName) {
-        $foundImage = $images | Where-Object { $_.ImageName -eq $targetName }
-        if ($foundImage) {
-            $actualIndex = $foundImage.ImageIndex
-            if ($actualIndex -ne $INDEX) {
-                Write-Log "Index shifted! Expected '$targetName' at $INDEX, but found at $actualIndex." "WARN"
-                Write-Log "Automatically adjusting INDEX to $actualIndex."
-                $script:INDEX = $actualIndex
-            } else {
-                Write-Log "Edition '$targetName' matched expected index $INDEX."
-            }
-        } else {
-            Write-Log "Expected edition '$targetName' not found in ISO. Proceeding with literal index $INDEX." "WARN"
-        }
-    } else {
-        Write-Log "No standard mapping for index $INDEX. Proceeding with literal index."
+
+    $requestedIndex = [int]$INDEX
+    $selection = Select-Tiny11SourceImage -Images $images -RequestedIndex $requestedIndex -Edition $Edition -ImagePath $sourceImagePath
+    $script:INDEX = [int]$selection.ImageIndex
+    $selectedImage = $selection.Image
+    $script:SourceImageIndex = $script:INDEX
+    $script:DetectedImageName = $selectedImage.ImageName
+    $script:DetectedEdition = $selectedImage.ImageName -replace '^Windows 11\s+', ''
+
+    if ($requestedIndex -eq 0) {
+        Write-Log "Auto-selected Windows 11 $Edition at actual image index $script:INDEX"
     }
-    
-    $validIndices = $images.ImageIndex
-    
-    if ($script:INDEX -notin $validIndices) {
-        Write-Log "Invalid index $script:INDEX. Available indices:" "ERROR"
-        $images | ForEach-Object { Write-Log "  Index $($_.ImageIndex): $($_.ImageName)" }
-        throw "Image index $script:INDEX not found"
-    }
-    
-    $selectedImage = $images | Where-Object { $_.ImageIndex -eq $script:INDEX }
     Write-Log "Selected: Index $script:INDEX - $($selectedImage.ImageName)"
 
-    # kelexine: the list object from 'Get-WindowsImage -ImagePath' has no 'Version'
-    # property - DISM only populates Version/SPBuild/Architecture on the detailed
-    # per-index object returned by 'Get-WindowsImage -ImagePath ... -Index N'.
-    # Re-query with -Index for build-number extraction. Wrapped in try/catch since
-    # this must never hard-fail the build - CI has its own windows_build fallback.
-    $script:DetectedImageName = $selectedImage.ImageName
+    # DISM's image-list result does not expose Version. Query the selected index directly.
     $script:DetectedFullVersion = ""
     try {
         $detailedImage = Get-WindowsImage -ImagePath $sourceImagePath -Index $script:INDEX
@@ -292,11 +272,10 @@ function Resolve-ImageIndex {
         Write-Log "Failed to query detailed image info for build number detection: $_" "WARN"
     }
 
-    if ($script:DetectedFullVersion -match '(\d+\.\d+)$') {
-        $script:DetectedBuildNumber = $Matches[1]
+    $script:DetectedBuildNumber = Get-Tiny11BuildNumber -FullVersion $script:DetectedFullVersion
+    if (-not [string]::IsNullOrWhiteSpace($script:DetectedBuildNumber)) {
         Write-Log "Detected Windows build number: $script:DetectedBuildNumber (full version: $script:DetectedFullVersion)"
     } else {
-        $script:DetectedBuildNumber = ""
         Write-Log "Could not parse a build number from image version '$script:DetectedFullVersion'" "WARN"
     }
 }
@@ -699,7 +678,7 @@ function Remove-EdgeAndOneDrive {
 }
 
 function Remove-WinRE {
-    # Author: kelexine (https://github.com/kelexine)
+    # Prior automation credit: kelexine
     #
     # WHY NO STUB: Replacing winre.wim with a 0-byte empty file causes Windows
     # Setup to hard-crash at ~75% with error 0x8007000B (ERROR_BAD_FORMAT) on
@@ -727,7 +706,7 @@ function Remove-WinRE {
 }
 
 function Patch-ReAgentXml {
-    # Author: kelexine (https://github.com/kelexine)
+    # Prior automation credit: kelexine
     #
     # WHY THIS IS NEEDED
     # ------------------
@@ -921,17 +900,21 @@ function Unload-RegistryHives {
 function Apply-RegistryTweaks {
     Write-Log "Applying registry tweaks..."
 
-    # Bypass system requirements
-    Set-RegistryValue 'HKLM\zDEFAULT\Control Panel\UnsupportedHardwareNotificationCache' 'SV1' 'REG_DWORD' '0'
-    Set-RegistryValue 'HKLM\zDEFAULT\Control Panel\UnsupportedHardwareNotificationCache' 'SV2' 'REG_DWORD' '0'
-    Set-RegistryValue 'HKLM\zNTUSER\Control Panel\UnsupportedHardwareNotificationCache' 'SV1' 'REG_DWORD' '0'
-    Set-RegistryValue 'HKLM\zNTUSER\Control Panel\UnsupportedHardwareNotificationCache' 'SV2' 'REG_DWORD' '0'
-    Set-RegistryValue 'HKLM\zSYSTEM\Setup\LabConfig' 'BypassCPUCheck' 'REG_DWORD' '1'
-    Set-RegistryValue 'HKLM\zSYSTEM\Setup\LabConfig' 'BypassRAMCheck' 'REG_DWORD' '1'
-    Set-RegistryValue 'HKLM\zSYSTEM\Setup\LabConfig' 'BypassSecureBootCheck' 'REG_DWORD' '1'
-    Set-RegistryValue 'HKLM\zSYSTEM\Setup\LabConfig' 'BypassStorageCheck' 'REG_DWORD' '1'
-    Set-RegistryValue 'HKLM\zSYSTEM\Setup\LabConfig' 'BypassTPMCheck' 'REG_DWORD' '1'
-    Set-RegistryValue 'HKLM\zSYSTEM\Setup\MoSetup' 'AllowUpgradesWithUnsupportedTPMOrCPU' 'REG_DWORD' '1'
+    if ($BypassHardwareRequirements) {
+        Write-Log "Explicitly adding Windows Setup hardware-check bypasses to the VM/Lab image." "WARN"
+        Set-RegistryValue 'HKLM\zDEFAULT\Control Panel\UnsupportedHardwareNotificationCache' 'SV1' 'REG_DWORD' '0'
+        Set-RegistryValue 'HKLM\zDEFAULT\Control Panel\UnsupportedHardwareNotificationCache' 'SV2' 'REG_DWORD' '0'
+        Set-RegistryValue 'HKLM\zNTUSER\Control Panel\UnsupportedHardwareNotificationCache' 'SV1' 'REG_DWORD' '0'
+        Set-RegistryValue 'HKLM\zNTUSER\Control Panel\UnsupportedHardwareNotificationCache' 'SV2' 'REG_DWORD' '0'
+        Set-RegistryValue 'HKLM\zSYSTEM\Setup\LabConfig' 'BypassCPUCheck' 'REG_DWORD' '1'
+        Set-RegistryValue 'HKLM\zSYSTEM\Setup\LabConfig' 'BypassRAMCheck' 'REG_DWORD' '1'
+        Set-RegistryValue 'HKLM\zSYSTEM\Setup\LabConfig' 'BypassSecureBootCheck' 'REG_DWORD' '1'
+        Set-RegistryValue 'HKLM\zSYSTEM\Setup\LabConfig' 'BypassStorageCheck' 'REG_DWORD' '1'
+        Set-RegistryValue 'HKLM\zSYSTEM\Setup\LabConfig' 'BypassTPMCheck' 'REG_DWORD' '1'
+        Set-RegistryValue 'HKLM\zSYSTEM\Setup\MoSetup' 'AllowUpgradesWithUnsupportedTPMOrCPU' 'REG_DWORD' '1'
+    } else {
+        Write-Log "No Windows Setup hardware-check bypasses are added by default."
+    }
 
     # Disable sponsored apps
     Set-RegistryValue 'HKLM\zNTUSER\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager' 'OemPreInstalledAppsEnabled' 'REG_DWORD' '0'
@@ -1067,27 +1050,32 @@ function Apply-RegistryTweaks {
     # Windows may attempt to recreate a WinRE partition and fail silently (or
     # trigger error dialogs). WinREEnabled=0 tells reagentc the feature is
     # intentionally absent. (Companion to the Remove-WinRE build-time deletion.)
-    Set-RegistryValue 'HKLM\zSYSTEM\ControlSet001\Control\WinRE' 'WinREEnabled' 'REG_DWORD' '0'
+    if (-not $PreserveWinRE) {
+        # The OS image intentionally omits WinRE; keep reagentc from staging a missing image.
+        Set-RegistryValue 'HKLM\zSYSTEM\ControlSet001\Control\WinRE' 'WinREEnabled' 'REG_DWORD' '0'
+    } else {
+        Write-Log "PreserveWinRE set; leaving the OS WinRE configuration enabled." "INFO"
+    }
 
     # Hide settings pages
     Set-RegistryValue 'HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer' 'SettingsPageVisibility' 'REG_SZ' 'hide:virus;windowsupdate'
 
     # Easter Egg / Branding
     Write-Log "Adding Easter Egg branding..."
-    Set-RegistryValue 'HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' 'legalnoticecaption' 'REG_SZ' 'Tiny11 Automated'
-    Set-RegistryValue 'HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' 'legalnoticetext' 'REG_SZ' 'This image was built using Tiny11 Automated by kelexine. Enjoy your lightweight Windows experience!'
+    Set-RegistryValue 'HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' 'legalnoticecaption' 'REG_SZ' 'TINY11-AUTOMATION'
+    Set-RegistryValue 'HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' 'legalnoticetext' 'REG_SZ' 'Built by NggKhaiz from the tiny11 builder by ntdevlabs and kelexine automation.'
     
     # Desktop Context Menu Link
-    Set-RegistryValue 'HKLM\zSOFTWARE\Classes\DesktopBackground\Shell\Tiny11Info' 'MUIVerb' 'REG_SZ' 'Tiny11 Automated Info'
+    Set-RegistryValue 'HKLM\zSOFTWARE\Classes\DesktopBackground\Shell\Tiny11Info' 'MUIVerb' 'REG_SZ' 'TINY11-AUTOMATION Info'
     Set-RegistryValue 'HKLM\zSOFTWARE\Classes\DesktopBackground\Shell\Tiny11Info' 'Icon' 'REG_SZ' 'shell32.dll,22'
     Set-RegistryValue 'HKLM\zSOFTWARE\Classes\DesktopBackground\Shell\Tiny11Info' 'Position' 'REG_SZ' 'Bottom'
-    Set-RegistryValue 'HKLM\zSOFTWARE\Classes\DesktopBackground\Shell\Tiny11Info\command' '' 'REG_SZ' 'explorer.exe "https://github.com/kelexine/tiny11-automated"'
+    Set-RegistryValue 'HKLM\zSOFTWARE\Classes\DesktopBackground\Shell\Tiny11Info\command' '' 'REG_SZ' 'explorer.exe "https://github.com/NggKhaiz/TINY11-AUTOMATION"'
 
     Write-Log "Registry tweaks applied"
 }
 
 function Apply-PerformanceTweaks {
-    # Author: kelexine (https://github.com/kelexine)
+    # Prior automation credit: kelexine
     # Bakes performance optimizations into the offline image via registry.
     # Covers: Memory, CPU/Scheduler, Storage (NTFS), Network (TCP), Gaming, Boot time.
     # Profile: Aggressive — gaming and VM workloads; requires ≥4 GB RAM.
@@ -1261,22 +1249,29 @@ function Process-BootImage {
     reg load HKLM\zSOFTWARE "$scratchDir\Windows\System32\config\SOFTWARE" 2>&1 | Out-Null
     reg load HKLM\zSYSTEM "$scratchDir\Windows\System32\config\SYSTEM" 2>&1 | Out-Null
 
-    Write-Log "Applying system requirement bypasses and WinRE suppression to boot image..."
-    Set-RegistryValue 'HKLM\zDEFAULT\Control Panel\UnsupportedHardwareNotificationCache' 'SV1' 'REG_DWORD' '0'
-    Set-RegistryValue 'HKLM\zDEFAULT\Control Panel\UnsupportedHardwareNotificationCache' 'SV2' 'REG_DWORD' '0'
-    Set-RegistryValue 'HKLM\zNTUSER\Control Panel\UnsupportedHardwareNotificationCache' 'SV1' 'REG_DWORD' '0'
-    Set-RegistryValue 'HKLM\zNTUSER\Control Panel\UnsupportedHardwareNotificationCache' 'SV2' 'REG_DWORD' '0'
-    Set-RegistryValue 'HKLM\zSYSTEM\Setup\LabConfig' 'BypassCPUCheck' 'REG_DWORD' '1'
-    Set-RegistryValue 'HKLM\zSYSTEM\Setup\LabConfig' 'BypassRAMCheck' 'REG_DWORD' '1'
-    Set-RegistryValue 'HKLM\zSYSTEM\Setup\LabConfig' 'BypassSecureBootCheck' 'REG_DWORD' '1'
-    Set-RegistryValue 'HKLM\zSYSTEM\Setup\LabConfig' 'BypassStorageCheck' 'REG_DWORD' '1'
-    Set-RegistryValue 'HKLM\zSYSTEM\Setup\LabConfig' 'BypassTPMCheck' 'REG_DWORD' '1'
-    Set-RegistryValue 'HKLM\zSYSTEM\Setup\LabConfig' 'DisableRecovery' 'REG_DWORD' '1'
-    Set-RegistryValue 'HKLM\zSYSTEM\Setup\MoSetup' 'AllowUpgradesWithUnsupportedTPMOrCPU' 'REG_DWORD' '1'
-    Set-RegistryValue 'HKLM\zSYSTEM\Setup\MoSetup' 'SkipInstallingWinRE' 'REG_DWORD' '1'
-    Set-RegistryValue 'HKLM\zSYSTEM\ControlSet001\Control\WinRE' 'WinREEnabled' 'REG_DWORD' '0'
+    Write-Log "Applying VM/Lab recovery settings to the boot image. Hardware-check bypass=$([bool]$BypassHardwareRequirements)."
+    if ($BypassHardwareRequirements) {
+        Set-RegistryValue 'HKLM\zDEFAULT\Control Panel\UnsupportedHardwareNotificationCache' 'SV1' 'REG_DWORD' '0'
+        Set-RegistryValue 'HKLM\zDEFAULT\Control Panel\UnsupportedHardwareNotificationCache' 'SV2' 'REG_DWORD' '0'
+        Set-RegistryValue 'HKLM\zNTUSER\Control Panel\UnsupportedHardwareNotificationCache' 'SV1' 'REG_DWORD' '0'
+        Set-RegistryValue 'HKLM\zNTUSER\Control Panel\UnsupportedHardwareNotificationCache' 'SV2' 'REG_DWORD' '0'
+        Set-RegistryValue 'HKLM\zSYSTEM\Setup\LabConfig' 'BypassCPUCheck' 'REG_DWORD' '1'
+        Set-RegistryValue 'HKLM\zSYSTEM\Setup\LabConfig' 'BypassRAMCheck' 'REG_DWORD' '1'
+        Set-RegistryValue 'HKLM\zSYSTEM\Setup\LabConfig' 'BypassSecureBootCheck' 'REG_DWORD' '1'
+        Set-RegistryValue 'HKLM\zSYSTEM\Setup\LabConfig' 'BypassStorageCheck' 'REG_DWORD' '1'
+        Set-RegistryValue 'HKLM\zSYSTEM\Setup\LabConfig' 'BypassTPMCheck' 'REG_DWORD' '1'
+        Set-RegistryValue 'HKLM\zSYSTEM\Setup\MoSetup' 'AllowUpgradesWithUnsupportedTPMOrCPU' 'REG_DWORD' '1'
+    }
+    if (-not $PreserveWinRE) {
+        Set-RegistryValue 'HKLM\zSYSTEM\Setup\LabConfig' 'DisableRecovery' 'REG_DWORD' '1'
+        Set-RegistryValue 'HKLM\zSYSTEM\Setup\MoSetup' 'SkipInstallingWinRE' 'REG_DWORD' '1'
+        Set-RegistryValue 'HKLM\zSYSTEM\ControlSet001\Control\WinRE' 'WinREEnabled' 'REG_DWORD' '0'
+        Set-RegistryValue 'HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Setup\Recovery' 'DisableRecovery' 'REG_DWORD' '1'
+        Write-Log "WinRE is omitted for this VM/Lab build; Setup recovery is disabled." "INFO"
+    } else {
+        Write-Log "PreserveWinRE set; leaving Setup recovery settings unchanged." "INFO"
+    }
     Set-RegistryValue 'HKLM\zSYSTEM\ControlSet001\Control\BitLocker' 'PreventDeviceEncryption' 'REG_DWORD' '1'
-    Set-RegistryValue 'HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Setup\Recovery' 'DisableRecovery' 'REG_DWORD' '1'
 
     # If winre.wim was removed from the OS image, patch ReAgent.xml in boot.wim as well
     # so SetupHost does not attempt to stage SafeOS from Install.esd during WinPE setup (bypasses error 0x80070003 at 11%)
@@ -1386,10 +1381,14 @@ function Write-BuildInfo {
     )
     try {
         $buildInfo = @{
+            profile       = 'VM/LabNano (experimental)'
+            hardware_requirement_bypass = [bool]$BypassHardwareRequirements
             windows_build = $script:DetectedBuildNumber
             full_version  = $script:DetectedFullVersion
             image_name    = $script:DetectedImageName
-            image_index   = $INDEX
+            source_index  = $script:SourceImageIndex
+            edition       = $script:DetectedEdition
+            final_image_index = 1
             generated_at  = (Get-Date -Format 'o')
         }
         $buildInfo | ConvertTo-Json | Out-File -FilePath $OutputPath -Encoding UTF8 -Force
@@ -1420,8 +1419,9 @@ function Invoke-Cleanup {
 #---------[ Main Execution ]---------#
 try {
     Write-Log "=== Nano11 Headless Builder Started ===" "INFO"
-    Write-Log "Author: kelexine (https://github.com/kelexine)"
-    Write-Log "Parameters: ISO=$ISO, INDEX=$INDEX, SCRATCH=$ScratchDisk"
+    Write-Log "Maintainer: NggKhaiz; automation credit: kelexine; original builder: ntdevlabs"
+    Write-Log "Profile: VM/LabNano (experimental; not a primary OS); Edition=$Edition; hardware bypass=$([bool]$BypassHardwareRequirements)"
+    Write-Log "Parameters: ISO=$ISO, INDEX=$INDEX (0 means auto-select by edition), SCRATCH=$ScratchDisk"
     Write-Log "WARNING: This creates the most minimal Windows 11 image - FOR TESTING ONLY!"
 
     Test-Prerequisites
@@ -1434,7 +1434,7 @@ try {
         Write-Log "Found install.esd, conversion required"
         Convert-ESDToWIM
         Copy-WindowsFiles
-        Write-Log "Resetting INDEX to 1 since ESD was exported to a new WIM"
+        Write-Log "Resetting working INDEX to 1 since ESD was exported to a one-image WIM"
         $script:INDEX = 1
     } else {
         Write-Log "Found install.wim, no conversion needed"

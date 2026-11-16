@@ -1,0 +1,2 @@
+# Dependencies used by all Python helper scripts.
+requests==2.34.2
