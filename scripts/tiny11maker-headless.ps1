@@ -172,26 +172,32 @@ function Write-IsoAnswerFile {
 
     try {
         $content = Get-Content -LiteralPath $Template -Raw
-        $imageIndexPattern = '(<Key>/IMAGE/INDEX</Key>\s*<Value>)\d+(</Value>)'
-        if ([regex]::Matches($content, $imageIndexPattern).Count -ne 1) {
+        # Ignore XML comments while locating actual elements; the template header
+        # documents example Compact values that must not be counted or rewritten.
+        $imageIndexPattern = '(?s)<!--.*?-->|(?<imageIndex>(?<prefix><Key>/IMAGE/INDEX</Key>\s*<Value>)\d+(?<suffix>\s*</Value>))'
+        $imageIndexMatches = @(
+            [regex]::Matches($content, $imageIndexPattern) |
+                Where-Object { $_.Groups['imageIndex'].Success }
+        )
+        if ($imageIndexMatches.Count -ne 1) {
             throw "Answer-file template must contain exactly one /IMAGE/INDEX placeholder."
         }
-        $content = [regex]::Replace(
-            $content,
-            $imageIndexPattern,
-            ('${1}' + $ImageIndex + '${2}')
-        )
+        $imageIndexMatch = $imageIndexMatches[0]
+        $imageIndexReplacement = $imageIndexMatch.Groups['prefix'].Value + $ImageIndex + $imageIndexMatch.Groups['suffix'].Value
+        $content = $content.Remove($imageIndexMatch.Index, $imageIndexMatch.Length).Insert($imageIndexMatch.Index, $imageIndexReplacement)
 
         $compactText = $Compact.ToString().ToLowerInvariant()
-        $compactPattern = '(<Compact>\s*)(?:true|false)(\s*</Compact>)'
-        if ([regex]::Matches($content, $compactPattern).Count -ne 1) {
+        $compactPattern = '(?s)<!--.*?-->|(?<compact>(?<prefix><Compact>\s*)(?:true|false)(?<suffix>\s*</Compact>))'
+        $compactMatches = @(
+            [regex]::Matches($content, $compactPattern) |
+                Where-Object { $_.Groups['compact'].Success }
+        )
+        if ($compactMatches.Count -ne 1) {
             throw "Answer-file template must contain exactly one Compact element."
         }
-        $content = [regex]::Replace(
-            $content,
-            $compactPattern,
-            ('${1}' + $compactText + '${2}')
-        )
+        $compactMatch = $compactMatches[0]
+        $compactReplacement = $compactMatch.Groups['prefix'].Value + $compactText + $compactMatch.Groups['suffix'].Value
+        $content = $content.Remove($compactMatch.Index, $compactMatch.Length).Insert($compactMatch.Index, $compactReplacement)
 
         # Account mode 'classic': drop the pre-created account, the auto-logon and
         # the first-logon cleanup so Windows Setup runs OOBE and the person

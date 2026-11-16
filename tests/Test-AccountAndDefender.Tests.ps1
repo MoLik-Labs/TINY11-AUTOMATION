@@ -22,22 +22,30 @@ BeforeAll {
             [bool]$Compact = $false
         )
 
-        $imageIndexPattern = '(<Key>/IMAGE/INDEX</Key>\s*<Value>)\d+(</Value>)'
-        if ([regex]::Matches($Content, $imageIndexPattern).Count -ne 1) {
+        $imageIndexPattern = '(?s)<!--.*?-->|(?<imageIndex>(?<prefix><Key>/IMAGE/INDEX</Key>\s*<Value>)\d+(?<suffix>\s*</Value>))'
+        $imageIndexMatches = @(
+            [regex]::Matches($Content, $imageIndexPattern) |
+                Where-Object { $_.Groups['imageIndex'].Success }
+        )
+        if ($imageIndexMatches.Count -ne 1) {
             throw 'Answer-file template must contain exactly one /IMAGE/INDEX placeholder.'
         }
-        $c = [regex]::Replace(
-            $Content,
-            $imageIndexPattern,
-            ('${1}' + $Index + '${2}')
-        )
+        $imageIndexMatch = $imageIndexMatches[0]
+        $imageIndexReplacement = $imageIndexMatch.Groups['prefix'].Value + $Index + $imageIndexMatch.Groups['suffix'].Value
+        $c = $Content.Remove($imageIndexMatch.Index, $imageIndexMatch.Length).Insert($imageIndexMatch.Index, $imageIndexReplacement)
 
         $compactText = $Compact.ToString().ToLowerInvariant()
-        $compactPattern = '(<Compact>\s*)(?:true|false)(\s*</Compact>)'
-        if ([regex]::Matches($c, $compactPattern).Count -ne 1) {
+        $compactPattern = '(?s)<!--.*?-->|(?<compact>(?<prefix><Compact>\s*)(?:true|false)(?<suffix>\s*</Compact>))'
+        $compactMatches = @(
+            [regex]::Matches($c, $compactPattern) |
+                Where-Object { $_.Groups['compact'].Success }
+        )
+        if ($compactMatches.Count -ne 1) {
             throw 'Answer-file template must contain exactly one Compact element.'
         }
-        $c = [regex]::Replace($c, $compactPattern, ('${1}' + $compactText + '${2}'))
+        $compactMatch = $compactMatches[0]
+        $compactReplacement = $compactMatch.Groups['prefix'].Value + $compactText + $compactMatch.Groups['suffix'].Value
+        $c = $c.Remove($compactMatch.Index, $compactMatch.Length).Insert($compactMatch.Index, $compactReplacement)
 
         if ($AccountMode -eq 'classic') {
             $c = [regex]::Replace($c, '(?s)\s*<UserAccounts>.*?</UserAccounts>', '')
@@ -90,7 +98,9 @@ Describe "Answer file: classic local-account OOBE is the safe default" {
     }
 
     It "forces Compact OS deployment off for the safe Standard default" {
-        $script:Classic | Should -Match '<Compact>false</Compact>'
+        $classicDoc = [xml]$script:Classic
+        $classicCompact = $classicDoc.SelectSingleNode("//*[local-name()='Compact']")
+        $classicCompact.InnerText | Should -Be 'false'
     }
 
     It "remains well-formed XML with the Shell-Setup component intact" {
@@ -131,7 +141,8 @@ Describe "Answer file: auto-admin is an explicit lab-only opt-in" {
     }
 
     It "keeps the explicitly requested Compact template value" {
-        $script:AutoAdmin | Should -Match '<Compact>true</Compact>'
+        $autoAdminDoc = [xml]$script:AutoAdmin
+        $autoAdminDoc.SelectSingleNode("//*[local-name()='Compact']").InnerText | Should -Be 'true'
     }
 
     It "remains well-formed XML" {
@@ -146,7 +157,7 @@ Describe "Builders expose the account-setup switch" {
 
         $content | Should -Match ([regex]::Escape('[string]$AccountSetup'))
         $content | Should -Match ([regex]::Escape("[ValidateSet('auto-admin', 'classic')]"))
-        $content | Should -Match ([regex]::Escape("[string]$AccountSetup = 'classic'"))
+        $content | Should -Match ([regex]::Escape("[string]`$AccountSetup = 'classic'"))
 
         $calls = ([regex]::Matches($content, 'Write-IsoAnswerFile -Destination')).Count
         $wired = ([regex]::Matches($content, '-AccountMode \$AccountSetup')).Count
@@ -159,7 +170,7 @@ Describe "Builders expose the account-setup switch" {
 
         $content | Should -Match ([regex]::Escape('[string]$AccountSetup'))
         $content | Should -Match ([regex]::Escape("[ValidateSet('auto-admin', 'classic')]"))
-        $content | Should -Match ([regex]::Escape("[string]$AccountSetup = 'classic'"))
+        $content | Should -Match ([regex]::Escape("[string]`$AccountSetup = 'classic'"))
 
         $calls = ([regex]::Matches($content, 'Write-IsoAnswerFile -Destination')).Count
         $wired = ([regex]::Matches($content, '-AccountMode \$AccountSetup')).Count

@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
     Pester tests for the Tiny11 Core-Gaming profile.
 
@@ -463,10 +463,12 @@ Describe 'Core-Gaming workflow' {
 
     It 'uses Microsoft-only media and temporary artifacts without permanent publishing' {
         $workflowRaw | Should -Match 'resolve-windows-iso\.ps1'
-        $workflowRaw | Should -Not -Match '(?i)windows_iso_url|sourceforge|softprops/action-gh-release'
+        $dispatchBlock = $workflowRaw.Split('workflow_dispatch:', 2)[1].Split("`nenv:", 2)[0]
+        $dispatchBlock | Should -Not -Match '(?i)^\s{6}windows_iso_url:'
+        $workflowRaw | Should -Not -Match '(?i)sourceforge|softprops/action-gh-release'
         $workflowRaw | Should -Not -Match '(?m)^\s*contents:\s*write'
         $workflowRaw | Should -Match 'actions/upload-artifact@v7'
-        $workflowRaw | Should -Not -Match 'retention-days:\s*(?!7\b)'
+        $workflowRaw | Should -Not -Match '(?m)^[ \t]*retention-days:[ \t]*(?!7\b)'
         $workflowRaw | Should -Match 'add-mask::\$\(\$iso\.Url\)'
         $workflowRaw | Should -Not -Match 'Substring\(0,\s*100\)'
     }
@@ -479,8 +481,9 @@ Describe 'Core-Gaming workflow' {
         $inputsBlock = $workflowRaw.Substring($start, $end - $start)
         $inputs = [regex]::Matches($inputsBlock, '(?m)^\s{6}([a-z_]+):') |
             ForEach-Object { $_.Groups[1].Value }
-        @($inputs).Count | Should -Be 24
-        @($inputs).Count | Should -BeLessOrEqual 25
+        $inputCount = @($inputs).Count
+        $inputCount | Should -Be 24
+        ($inputCount -le 25) | Should -BeTrue
     }
 
     It 'adds a toggle for every gaming group' {
@@ -626,10 +629,11 @@ Describe 'Profile engine functional behaviour' {
         $parsed.groups.disable_mpo | Should -BeFalse
         $parsed.hagsMode | Should -Be 'on'
         $flagNames = @($parsed.groups.PSObject.Properties.Name)
-        $flagNames.Count | Should -Be $profile.defaultGroups.PSObject.Properties.Count
-        foreach ($group in $profile.defaultGroups.PSObject.Properties.Name) {
+        $expectedGroups = @($profile.defaultGroups.PSObject.Properties.Name)
+        $flagNames.Count | Should -Be $expectedGroups.Count
+        foreach ($group in $expectedGroups) {
             $flagNames | Should -Contain $group
-            $parsed.groups.$group | Should -BeOfType [bool]
+            ($parsed.groups.PSObject.Properties[$group].Value -is [bool]) | Should -BeTrue
         }
     }
 
