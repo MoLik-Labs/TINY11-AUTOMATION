@@ -461,17 +461,28 @@ Describe 'Core-Gaming workflow' {
         $workflowRaw | Should -Match '\$buildInfo\.edition'
     }
 
-    It 'uses Microsoft-only media and temporary artifacts without permanent publishing' {
+    It 'resolves Windows media with the Microsoft resolver' {
         $workflowRaw | Should -Match 'resolve-windows-iso\.ps1'
+        $workflowRaw | Should -Match '\$uri\.Host -notin'
+        $workflowRaw | Should -Match 'software\.download\.prss\.microsoft\.com'
+    }
+
+    It 'does not publish build output permanently' {
         $workflowRaw | Should -Not -Match '(?i)sourceforge|softprops/action-gh-release'
         $workflowRaw | Should -Not -Match '(?m)^\s*contents:\s*write'
+    }
+
+    It 'uses temporary upload-artifact storage with seven-day retention' {
         $workflowRaw | Should -Match 'actions/upload-artifact@v7'
         $retentionDays = @(
-            [regex]::Matches($workflowRaw, '(?m)^[ \t]*retention-days:[ \t]*(\d+)[ \t]*$') |
+            [regex]::Matches($workflowRaw, '(?m)^[ \t]*retention-days:[ \t]*(\d+)[ \t]*\r?$') |
                 ForEach-Object { [int]$_.Groups[1].Value }
         )
         $retentionDays | Should -Not -BeNullOrEmpty
         foreach ($days in $retentionDays) { $days | Should -Be 7 }
+    }
+
+    It 'masks signed ISO URLs in logs and does not truncate them unsafely' {
         $workflowRaw | Should -Match 'add-mask::\$\(\$iso\.Url\)'
         $workflowRaw | Should -Not -Match 'Substring\(0,\s*100\)'
     }
