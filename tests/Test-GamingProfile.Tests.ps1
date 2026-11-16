@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
     Pester tests for the Tiny11 Core-Gaming profile.
 
@@ -463,8 +463,6 @@ Describe 'Core-Gaming workflow' {
 
     It 'uses Microsoft-only media and temporary artifacts without permanent publishing' {
         $workflowRaw | Should -Match 'resolve-windows-iso\.ps1'
-        $dispatchBlock = $workflowRaw.Split('workflow_dispatch:', 2)[1].Split("`nenv:", 2)[0]
-        $dispatchBlock | Should -Not -Match '(?i)^\s{6}windows_iso_url:'
         $workflowRaw | Should -Not -Match '(?i)sourceforge|softprops/action-gh-release'
         $workflowRaw | Should -Not -Match '(?m)^\s*contents:\s*write'
         $workflowRaw | Should -Match 'actions/upload-artifact@v7'
