@@ -471,7 +471,7 @@ Describe 'Core-Gaming workflow' {
         $workflowRaw | Should -Not -Match 'Substring\(0,\s*100\)'
     }
 
-    It 'declares 24 dispatch inputs and stays under GitHub's 25-input maximum' {
+    It "declares 24 dispatch inputs and stays under GitHub's 25-input maximum" {
         $start = $workflowRaw.IndexOf('workflow_dispatch:')
         $end   = $workflowRaw.IndexOf("`nenv:", $start)
         $start | Should -BeGreaterThan 0
