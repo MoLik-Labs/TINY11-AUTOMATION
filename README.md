@@ -125,3 +125,11 @@ No `LICENSE` file is currently present in this checkout. Do not infer an MIT lic
 ## Contributing
 
 Please include the profile affected, a reproducible source ISO/build and image index, logs with signed URL query strings removed, and before/after measurements. Changes that remove or disable Windows Update, Defender, WinRE, printing, drivers, or servicing from Standard require explicit justification and regression tests; prefer putting destructive changes in VM/Lab profiles.
+
+### Experimental Pico and Flow concepts
+
+- [Pico-style VM/Lab experiment](PICO.md) integrates NTDEV's official CD700
+  recipe through a SHA-256-verified upstream builder download. Extreme removals;
+  no promised ISO size or successful boot.
+- [Flow-inspired desktop concept](FLOW.md) is a browser-only visual prototype,
+  not an operating system and not an app compatibility layer.
