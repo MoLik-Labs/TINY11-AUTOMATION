@@ -43,3 +43,11 @@ def test_flow_describes_its_limits_and_has_local_assets_only():
     assert 'https://' not in html and 'http://' not in html
     assert 'aria-label="Close compatibility window"' in html
     assert 'aria-label="Open compatibility overview"' in html
+
+
+def test_flow_about_link_resolves_inside_preview():
+    html = (ROOT / 'flow-preview/index.html').read_text(encoding='utf-8')
+    assert 'href="about.html"' in html
+    about = (ROOT / 'flow-preview/about.html').read_text(encoding='utf-8')
+    assert 'cannot install or run' in about
+    assert 'href="index.html"' in about
