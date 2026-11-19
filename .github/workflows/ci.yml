@@ -120,4 +120,4 @@ jobs:
           Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
           Install-Module -Name Pester -RequiredVersion 5.7.1 -Scope CurrentUser -Force -SkipPublisherCheck
           Import-Module Pester -RequiredVersion 5.7.1
-          Invoke-Pester -Path tests -Output Detailed
+          Invoke-Pester -Path tests -Output Detailed -CI
