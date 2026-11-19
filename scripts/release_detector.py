@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Windows 11 Release Detection & Monitoring System
-Author: kelexine (https://github.com/kelexine)
+Maintainer: NggKhaiz | automation credit: kelexine | original builder: ntdevlabs
 
 Monitors multiple sources for new Windows 11 releases and triggers builds.
 """
@@ -12,10 +12,11 @@ import json
 import logging
 import requests
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional
 from dataclasses import dataclass, asdict
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
 # Import Microsoft Playwright downloader (replaces old scraper)
 try:
@@ -48,45 +49,90 @@ class WindowsRelease:
     language: str = "en-us"
     checksum_sha256: Optional[str] = None
     size_bytes: Optional[int] = None
+    iso_fingerprint: str = ""
 
 
 class ReleaseDetector:
     """Detects new Windows 11 releases from multiple sources"""
-    
+
     def __init__(self, tracking_file: str = "tracked_releases.json"):
         self.tracking_file = Path(tracking_file)
         self.tracked_data = self._load_tracked()
         # Sources are now defined dynamically in detect_new_releases
-    
+
     def _load_tracked(self) -> Dict:
         """Load previously tracked releases"""
         if self.tracking_file.exists():
             try:
-                with open(self.tracking_file, 'r') as f:
-                    return json.load(f)
-            except json.JSONDecodeError:
-                logger.warning(f"Invalid JSON in {self.tracking_file}, starting fresh")
-        
+                with open(self.tracking_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                if not isinstance(data, dict):
+                    raise ValueError("tracking file root must be an object")
+                if not isinstance(data.get('builds'), dict):
+                    data['builds'] = {}
+                data.setdefault('last_check', None)
+                data.setdefault('check_count', 0)
+                return data
+            except (json.JSONDecodeError, ValueError):
+                logger.warning(f"Invalid tracking data in {self.tracking_file}, starting fresh")
+
         return {
             'builds': {},
             'last_check': None,
             'check_count': 0
         }
-    
+
     def _save_tracked(self):
         """Save tracked releases to file"""
-        self.tracked_data['last_check'] = datetime.now().isoformat()
-        self.tracked_data['check_count'] = self.tracked_data.get('check_count', 0) + 1
-        
-        with open(self.tracking_file, 'w') as f:
+        self.tracked_data['last_check'] = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+        try:
+            check_count = int(self.tracked_data.get('check_count', 0))
+        except (TypeError, ValueError):
+            check_count = 0
+        self.tracked_data['check_count'] = check_count + 1
+
+        # Microsoft direct-download URLs contain expiring signed query parameters.
+        # Persist only the stable path; each build job resolves its own fresh URL,
+        # so the signed value is never written to tracking or workflow outputs.
+        for entry in self.tracked_data.get('builds', {}).values():
+            if not isinstance(entry, dict):
+                continue
+            url = entry.get('iso_url')
+            if not isinstance(url, str) or not url:
+                entry['iso_url'] = ''
+                continue
+            try:
+                parsed = urlsplit(url)
+                port = parsed.port
+            except ValueError:
+                entry['iso_url'] = ''
+                continue
+
+            if (
+                parsed.scheme.lower() != 'https'
+                or not parsed.hostname
+                or parsed.username is not None
+                or parsed.password is not None
+                or port not in (None, 443)
+            ):
+                entry['iso_url'] = ''
+                continue
+
+            hostname = parsed.hostname
+            if ':' in hostname and not hostname.startswith('['):
+                hostname = f'[{hostname}]'
+            netloc = f'{hostname}:{port}' if port is not None else hostname
+            entry['iso_url'] = urlunsplit(('https', netloc, parsed.path, '', ''))
+
+        with open(self.tracking_file, 'w', encoding='utf-8') as f:
             json.dump(self.tracked_data, f, indent=2)
-        
+
         logger.info(f"✅ Saved tracking data to {self.tracking_file}")
-    
+
     def _check_uupdump(self) -> List[WindowsRelease]:
         """Check UUP Dump API for new releases"""
         logger.info("🔍 Checking UUP Dump...")
-        
+
         try:
             response = requests.get(
                 "https://api.uupdump.net/listid.php",
@@ -98,59 +144,59 @@ class ReleaseDetector:
             )
             response.raise_for_status()
             data = response.json()
-            
+
             # Debug: Log response structure
             logger.debug(f"API Response keys: {data.keys() if isinstance(data, dict) else 'Not a dict'}")
-            
+
             # Validate response structure
             if not isinstance(data, dict):
                 logger.error(f"❌ Invalid response type: {type(data)}")
                 return []
-            
+
             if 'response' not in data:
                 logger.error(f"❌ Missing 'response' key in data: {list(data.keys())}")
                 return []
-            
+
             response_data = data.get('response', {})
             if not isinstance(response_data, dict):
                 logger.error(f"❌ Invalid response data type: {type(response_data)}")
                 return []
-            
+
             builds_data = response_data.get('builds', {})
-            
+
             # UUP Dump API returns builds as a dict, not a list!
             if not isinstance(builds_data, dict):
                 logger.error(f"❌ Unexpected builds data type: {type(builds_data)}")
                 return []
-            
+
             logger.info(f"📦 Found {len(builds_data)} total builds from API")
-            
+
             releases = []
             processed = 0
-            
+
             # Convert dict to list of builds and process first 30
             # Sort by key (numeric) to get most recent first
             sorted_keys = sorted(builds_data.keys(), key=lambda x: int(x) if x.isdigit() else 0, reverse=True)
-            
+
             for key in sorted_keys[:30]: # Process only the most recent 30 builds
                 build = builds_data[key]
-                
+
                 if not isinstance(build, dict):
                     logger.warning(f"⚠️  Skipping non-dict build at key {key}: {type(build)}")
                     continue
-                
+
                 processed += 1
                 build_id = build.get('uuid')
                 title = build.get('title', '')
                 arch = build.get('arch', '')
-                
+
                 # Filter for x64 Windows 11
                 if 'Windows 11' not in title or arch != 'amd64':
                     continue
-                
+
                 # Extract version
                 version = self._extract_version(title)
-                
+
                 release = WindowsRelease(
                     build_id=build_id,
                     build_number=build.get('build', 'Unknown'),
@@ -161,13 +207,13 @@ class ReleaseDetector:
                     architecture=arch,
                     channel='retail' if 'Insider' not in title else 'insider'
                 )
-                
+
                 releases.append(release)
                 logger.info(f"  ✨ Found: {title}")
-            
+
             logger.info(f"✅ Processed {processed} builds, found {len(releases)} new Windows 11 x64 releases from UUP Dump")
             return releases
-            
+
         except requests.RequestException as e:
             logger.error(f"❌ Network error during UUP Dump check: {e}")
             return []
@@ -182,7 +228,7 @@ class ReleaseDetector:
             import traceback
             logger.debug(traceback.format_exc())
             return []
-    
+
     def _extract_version(self, title: str) -> str:
         """Extract Windows version from title"""
         # Try explicit version strings first (most reliable)
@@ -190,18 +236,18 @@ class ReleaseDetector:
             (r'version\s+(\d{2}H\d)', 'direct'),  # "version 24H2"
             (r'\b(\d{2}H\d)\b', 'standalone'),    # "24H2" standalone
         ]
-        
+
         for pattern, ptype in version_patterns:
             import re
             match = re.search(pattern, title, re.IGNORECASE)
             if match:
                 return match.group(1).upper()
-        
+
         # Fallback: map build numbers to versions
         build_match = re.search(r'\((\d{5})', title)
         if build_match:
             build_num = int(build_match.group(1))
-            
+
             # Build number ranges for versions
             if 26200 <= build_num < 27000:
                 return '25H2'
@@ -215,63 +261,82 @@ class ReleaseDetector:
                 return '22H2'
             elif 22631 <= build_num < 23000:
                 return '23H2'
-        
+
         # If still unknown, mark as Insider if title contains it
         if 'insider' in title.lower() or 'preview' in title.lower():
             return 'Insider-Preview'
-        
+
         return 'Unknown'
-    
+
     def _check_microsoft_direct(self) -> List[WindowsRelease]:
         """
         Get direct ISO download link from Microsoft via Playwright automation
         This replaces UUP Dump URLs with actual direct Microsoft CDN links
         """
         logger.info("🔍 Checking Microsoft Direct Downloads (Playwright)...")
-        
+
         try:
             downloader = MicrosoftPlaywrightDownloader(headless=True, timeout=60000)
             versions = downloader.get_all_versions()
-            
+
             releases = []
+            tracked_builds = self.tracked_data.setdefault('builds', {})
             for v in versions:
-                # Skip if already tracked
-                if v['build_id'] in self.tracked_data.get('builds', {}):
-                    logger.debug(f"  ⏭️  Already tracked: {v['build_id']}")
+                # Skip if this stable, token-independent identity is already tracked.
+                if v['build_id'] in tracked_builds:
+                    logger.debug(f"  Already tracked: {v['build_id']}")
                     continue
-                
+
                 release = WindowsRelease(
                     build_id=v['build_id'],
                     build_number=v['build_number'],
                     version=v['version'],
                     title=v['title'],
-                    iso_url=v['iso_url'],  # DIRECT ISO URL from Microsoft!
+                    iso_url=v['iso_url'],
                     detected_date=v['detected_date'],
                     architecture=v['architecture'],
                     channel=v['channel'],
-                    language=v['language']
+                    language=v['language'],
+                    iso_fingerprint=v.get('iso_fingerprint', '')
                 )
-                
+
+                # Older tracking records used a date in build_id and had no CDN
+                # fingerprint. Backfill a stable ID for the same ISO path without
+                # raising a false "new release" alert during migration.
+                current_path = urlsplit(release.iso_url)._replace(query='', fragment='').geturl()
+                legacy_seen = any(
+                    str(old_id).startswith('msft-playwright-')
+                    and not old_entry.get('iso_fingerprint')
+                    and old_entry.get('version') == release.version
+                    and str(old_entry.get('build_number', '')).casefold() == release.build_number.casefold()
+                    and urlsplit(str(old_entry.get('iso_url', '')))._replace(query='', fragment='').geturl() == current_path
+                    for old_id, old_entry in tracked_builds.items()
+                    if isinstance(old_entry, dict)
+                )
+                if legacy_seen:
+                    tracked_builds[release.build_id] = asdict(release)
+                    logger.info("  Backfilled stable tracking ID for an already-seen ISO path; not reporting a new release.")
+                    continue
+
                 releases.append(release)
-                logger.info(f"  ✨ Found direct ISO: {v['title']}")
-            
+                logger.info(f"  Found direct ISO: {v['title']}")
+
             logger.info(f"✅ Got {len(releases)} direct download link(s) from Microsoft")
             return releases
-            
+
         except Exception as e:
-            logger.error(f"❌ Microsoft Playwright check failed: {e}")
-            import traceback
-            logger.debug(traceback.format_exc())
+            # Exceptions from the browser/CDN may embed a short-lived signed URL.
+            logger.error("❌ Microsoft Playwright check failed (%s); exception details omitted", type(e).__name__)
             return []
-    
+
     def _compare_builds(self, build1: str, build2: str) -> int:
         """
         Compare two build numbers
-        
+
         Args:
             build1: First build number (e.g., "26100.1234")
             build2: Second build number (e.g., "26100.5678")
-        
+
         Returns:
             1 if build1 > build2, -1 if build1 < build2, 0 if equal
         """
@@ -283,10 +348,10 @@ class ReleaseDetector:
                 major = int(parts[0]) if parts else 0
                 minor = int(parts[1]) if len(parts) > 1 else 0
                 return (major, minor)
-            
+
             b1 = parse_build(build1)
             b2 = parse_build(build2)
-            
+
             if b1 > b2:
                 return 1
             elif b1 < b2:
@@ -296,32 +361,32 @@ class ReleaseDetector:
         except (ValueError, IndexError) as e:
             logger.warning(f"⚠️  Error comparing builds {build1} vs {build2}: {e}")
             return 0
-    
+
     def _deduplicate_by_version(self, releases: List[WindowsRelease]) -> List[WindowsRelease]:
         """
         Keep only the latest build per version to avoid triggering too many builds
-        
+
         For example, if we detect:
         - 24H2 Build 26100.1000
         - 24H2 Build 26100.2000
         - 25H2 Build 26200.1000
-        
+
         We'll keep only:
         - 24H2 Build 26100.2000 (latest)
         - 25H2 Build 26200.1000
-        
+
         Args:
             releases: List of WindowsRelease objects
-        
+
         Returns:
             Deduplicated list with one release per version
         """
         logger.info(f"📊 Deduplicating {len(releases)} releases by version...")
-        
+
         version_map = {}
         for release in releases:
             version = release.version
-            
+
             if version not in version_map:
                 version_map[version] = release
                 logger.debug(f"  First {version}: Build {release.build_number}")
@@ -329,7 +394,7 @@ class ReleaseDetector:
                 # Keep the one with higher build number
                 existing = version_map[version]
                 comparison = self._compare_builds(release.build_number, existing.build_number)
-                
+
                 if comparison > 0:
                     logger.info(f"  ✨ Updating {version}: {existing.build_number} → {release.build_number}")
                     version_map[version] = release
@@ -337,49 +402,60 @@ class ReleaseDetector:
                     logger.debug(f"  ⏭️  Skipping older {version}: {release.build_number} (keeping {existing.build_number})")
                 else:
                     logger.debug(f"  ⏭️  Skipping duplicate {version}: {release.build_number}")
-        
+
         deduped = list(version_map.values())
         logger.info(f"✅ Deduplicated to {len(deduped)} releases (one per version)")
-        
+
         for release in deduped:
             logger.info(f"  📦 {release.version}: Build {release.build_number}")
-        
+
         return deduped
-    
+
     def detect_new_releases(self, force: bool = False) -> List[WindowsRelease]:
         """
         Detect new releases from all sources
-        
+
         Args:
             force: Force check even if recently checked
-        
+
         Returns:
             List of new WindowsRelease objects
         """
         # Check if we should skip (checked recently)
         if not force and self.tracked_data.get('last_check'):
-            last_check = datetime.fromisoformat(self.tracked_data['last_check'])
-            if datetime.now() - last_check < timedelta(hours=1):
-                logger.info("⏭️  Skipping check (checked less than 1 hour ago)")
-                return []
-        
+            try:
+                last_check_value = self.tracked_data['last_check']
+                last_check = datetime.fromisoformat(last_check_value.replace('Z', '+00:00'))
+                if last_check.tzinfo is None:
+                    last_check = last_check.replace(tzinfo=timezone.utc)
+                elapsed = datetime.now(timezone.utc) - last_check
+                if timedelta(0) <= elapsed < timedelta(hours=1):
+                    logger.info("⏭️  Skipping check (checked less than 1 hour ago)")
+                    return []
+                if elapsed < timedelta(0):
+                    logger.warning("Tracked last_check timestamp is in the future; performing a fresh check")
+            except (AttributeError, TypeError, ValueError):
+                logger.warning("Tracked last_check timestamp is invalid; performing a fresh check")
+
         all_releases = []
-        
-        # Define enabled sources (microsoft_direct is primary, UUP Dump is backup)
+
+        # Only official Microsoft direct ISO URLs are eligible for build dispatch.
+        # UUP Dump provides UUP conversion packages, not a direct ISO URL, and is
+        # deliberately excluded until a separate, validated conversion pipeline exists.
         sources = {
-            'microsoft_direct': True,   # Primary - direct ISO links via Playwright
-            'uupdump': True,            # Backup - version detection
+            'microsoft_direct': True,
+            'uupdump': False,
         }
-        
+
         # Check each enabled source
         for source_name, enabled in sources.items():
             if not enabled:
                 logger.info(f"  ⏭️  Skipping disabled source: {source_name}")
                 continue
-            
+
             try:
                 logger.info(f"🎯 Checking {source_name}...")
-                
+
                 if source_name == 'microsoft_direct':
                     source_releases = self._check_microsoft_direct()
                 elif source_name == 'uupdump':
@@ -387,70 +463,59 @@ class ReleaseDetector:
                 else:
                     logger.warning(f"⚠️  Unknown source: {source_name}")
                     continue
-                
+
                 all_releases.extend(source_releases)
             except Exception as e:
-                logger.error(f"❌ Source check failed: {e}")
-                import traceback
-                logger.debug(traceback.format_exc())
+                logger.error("❌ Source check failed (%s); exception details omitted", type(e).__name__)
                 continue
-        
+
         # Deduplicate by build_id first
         unique_releases = {r.build_id: r for r in all_releases}
-        
+
         # Then deduplicate by version (keep only latest build per version)
         # This prevents triggering 90 builds when we should only trigger 12-18
         version_deduped = self._deduplicate_by_version(list(unique_releases.values()))
-        
+
         # Update tracked data with ALL unique releases (not just deduped ones)
         # This ensures we don't re-detect older builds later
         for release in unique_releases.values():
             self.tracked_data['builds'][release.build_id] = asdict(release)
-        
+
         # Save tracking data
         self._save_tracked()
-        
+
         # Return only version-deduplicated releases for building
         return version_deduped
-    
-    def generate_matrix(self, releases: List[WindowsRelease]) -> Dict:
+
+    def generate_matrix(self, releases: List[WindowsRelease]) -> List[Dict]:
+        """Return token-free dispatch records for the supported build matrix.
+
+        The signed Microsoft URL is deliberately excluded from workflow inputs
+        and run metadata. Build jobs resolve a fresh link themselves, then check
+        it against this stable ISO path before downloading. Nano is not included
+        in scheduled or detector-driven dispatches.
         """
-        Generate GitHub Actions matrix from releases
-        
-        Returns:
-            Dictionary suitable for matrix strategy
-        """
-        logger.info(f"🎯 Generating build matrix for {len(releases)} versions")
-        
-        matrix = {
-            'include': []
-        }
-        
+        logger.info("🎯 Preparing token-free dispatch records for %d detected release(s)", len(releases))
+        matrix = []
         for release in releases:
-            logger.info(f"  📦 {release.version}: Build {release.build_number}")
-            
-            # Generate matrix entries for different build types
-            for build_type in ['standard', 'core', 'nano']:
-                for edition in [1, 6]:  # Home, Pro
-                    matrix['include'].append({
-                        'version': release.version,
-                        'build': release.build_number,
-                        'iso_url': release.iso_url,
-                        'build_type': build_type,
-                        'edition': edition,
-                        'edition_name': 'Home' if edition == 1 else 'Pro',
-                        'title': release.title.replace(' ', '_').replace('(', '').replace(')', '')
-                    })
-        
-        total_builds = len(matrix['include'])
-        logger.info(f"✅ Generated {total_builds} total builds ({len(releases)} versions × 3 types × 2 editions)")
-        
+            parsed_url = urlsplit(release.iso_url)
+            matrix.append({
+                "build_id": release.build_id,
+                "build_number": release.build_number,
+                "version": release.version,
+                "title": release.title,
+                "iso_path": parsed_url.path,
+                "detected_date": release.detected_date,
+                "architecture": release.architecture,
+                "channel": release.channel,
+                "language": release.language,
+            })
         return matrix
-    
+
     def create_github_issue(self, release: WindowsRelease) -> Dict:
         """
         Generate GitHub issue data for new release
-        
+
         Returns:
             Dictionary with issue title and body
         """
@@ -465,25 +530,27 @@ class ReleaseDetector:
 - **Detection Date:** {release.detected_date}
 
 **ISO Source:**
-- {release.iso_url}
+- [Microsoft Windows 11 download page](https://www.microsoft.com/software-download/windows11)
+- Temporary signed download URLs are intentionally omitted from issues and tracking files; they expire.
 
-**Automated Actions:**
-- [ ] Trigger Tiny11 Standard build
-- [ ] Trigger Tiny11 Core build
-- [ ] Trigger Nano11 build
-- [ ] Test builds in VM
-- [ ] Upload to SourceForge
+**Review and testing:**
+- [ ] Review whether a Standard/SafeLite build should be run for Home or Pro
+- [ ] Review whether a Core VM/Lab build should be run for Home or Pro
+- [ ] Nano profile is disabled by default
+- [ ] Test any output in a disposable VM
+- [ ] Complete VM smoke-test and review functionality/performance measurements
 - [ ] Update documentation
 
 **Build Matrix:**
-- Home Edition (Standard, Core, Nano)
-- Pro Edition (Standard, Core, Nano)
+- Home Edition (Standard, Core; Nano disabled)
+- Pro Edition (Standard, Core; Nano disabled)
+- Detection does not dispatch builds by default; scheduled builds require explicit opt-in.
 
 ---
-*This issue was automatically created by the Version Matrix Builder*  
-*Author: [kelexine](https://github.com/kelexine)*
+*This issue was automatically created by TINY11-AUTOMATION.*
+*Maintainer: [NggKhaiz](https://github.com/NggKhaiz/TINY11-AUTOMATION); automation credit: [kelexine](https://github.com/kelexine); original builder: [ntdevlabs](https://github.com/ntdevlabs).*
 """
-        
+
         return {
             'title': f"🆕 New Windows {release.version} Release - Build {release.build_number}",
             'body': body,
@@ -494,7 +561,7 @@ class ReleaseDetector:
 def main():
     """Main execution function"""
     import argparse
-    
+
     parser = argparse.ArgumentParser(
         description='Windows 11 Release Detection System'
     )
@@ -513,48 +580,45 @@ def main():
         default='tracked_releases.json',
         help='Release tracking file'
     )
-    
+
     args = parser.parse_args()
-    
+
     # Initialize detector
     detector = ReleaseDetector(tracking_file=args.tracking_file)
-    
+
     # Detect new releases
     logger.info("🚀 Starting release detection...")
     new_releases = detector.detect_new_releases(force=args.force)
-    
+
     if not new_releases:
         logger.info("📭 No new releases detected")
-        
+
         # Write outputs for GitHub Actions
         with open(args.output, 'w') as f:
             f.write("has_new=false\n")
             f.write("new_releases=[]\n")
             f.write("releases_matrix=[]\n")
-        
+
         return 0
-    
+
     # We found new releases!
     logger.info(f"✅ Found {len(new_releases)} new release(s)!")
-    
+
     for release in new_releases:
         logger.info(f"  - {release.title} (Build {release.build_number})")
-    
-    # Generate matrix
-    # note: we output the list of releases directly. The YAML workflow handles
-    # the expansion of build types and editions via its own matrix strategy.
-    
-    # Prepare data for GitHub Actions output
-    # Use compact JSON to avoid multi-line issues
-    new_releases_json = json.dumps([asdict(r) for r in new_releases], separators=(',', ':'))
-    
+
+    # The workflow expands each release into Standard/Core × Home/Pro.
+    # Prepare compact JSON for GitHub Actions' single-line outputs.
+    matrix_inputs = detector.generate_matrix(new_releases)
+    new_releases_json = json.dumps(matrix_inputs, separators=(',', ':'))
+
     # Write outputs for GitHub Actions (single line format)
     with open(args.output, 'w') as f:
         f.write("has_new=true\n")
         f.write(f"new_releases={new_releases_json}\n")
         f.write(f"releases_matrix={new_releases_json}\n")
         f.write(f"release_count={len(new_releases)}\n")
-    
+
     logger.info("✅ Detection complete!")
     return 0
 

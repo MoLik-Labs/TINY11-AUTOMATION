@@ -1,13 +1,13 @@
-# Feature Request Template for Tiny11 Automated
-# Author: kelexine
-# GitHub: https://github.com/kelexine/tiny11-automated
+# Feature Request Template for TINY11-AUTOMATION
+# Maintainer: NggKhaiz; automation credit: kelexine; original builder: ntdevlabs
+# GitHub: https://github.com/NggKhaiz/TINY11-AUTOMATION
 
 name: ✨ Feature Request
 description: Suggest a new feature or enhancement
 title: "[FEATURE] "
 labels: ["enhancement", "needs-discussion"]
 assignees:
-  - kelexine
+  - NggKhaiz
 
 body:
   - type: markdown
@@ -15,7 +15,7 @@ body:
       value: |
         ## Thanks for suggesting a feature! ✨
         
-        Your ideas help make Tiny11 better for 2,000+ users worldwide.
+        Your ideas help improve the profiles, workflows, documentation, and validation process.
         
         **Before submitting:**
         - Search existing feature requests to avoid duplicates

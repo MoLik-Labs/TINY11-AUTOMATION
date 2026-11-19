@@ -121,7 +121,7 @@ Describe 'Gaming profile JSON' {
         }
     }
 
-    It 'disables Game Mode and enables the AtlasOS power scheme by default' {
+    It 'declares the configured Game Mode and experimental power-plan defaults' {
         $profile.defaultGroups.disable_game_mode           | Should -BeTrue
         $profile.defaultGroups.atlas_power_scheme          | Should -BeTrue
         $profile.defaultGroups.disable_security_mitigations | Should -BeTrue
@@ -132,9 +132,7 @@ Describe 'Gaming profile JSON' {
         $profile.defaultGroups.interrupt_latency | Should -BeTrue
     }
 
-    It 'leaves VRR optimisation ON in the DirectX global settings' {
-        # It was 0 in an earlier revision. 0 tells DWM not to align presentation to the
-        # display's refresh window, which is the opposite of what frame pacing wants.
+    It 'records the configured DirectX user preference values without a performance assertion' {
         $entry = $profile.registry |
             Where-Object { $_.name -eq 'DirectXUserGlobalSettings' }
         $entry | Should -Not -BeNullOrEmpty
@@ -143,21 +141,21 @@ Describe 'Gaming profile JSON' {
         $entry.value | Should -Not -Match 'VRROptimizeEnable=0'
     }
 
-    It 'sets SystemResponsiveness to the AtlasOS value of 10' {
+    It 'sets the configured SystemResponsiveness value to 10' {
         $entry = $profile.registry |
             Where-Object { $_.name -eq 'SystemResponsiveness' }
         $entry | Should -Not -BeNullOrEmpty
         $entry.value | Should -Be '10'
     }
 
-    It 'disables VBS, HVCI, Credential Guard and Spectre/Meltdown mitigations' {
+    It 'requests the configured VBS, HVCI, Credential Guard and mitigation settings' {
         $names = @($profile.registry | Where-Object { $_.group -eq 'disable_security_mitigations' })
         ($names | Where-Object { $_.name -eq 'EnableVirtualizationBasedSecurity' }) | Should -Not -BeNullOrEmpty
         ($names | Where-Object { $_.name -eq 'Enabled' })                            | Should -Not -BeNullOrEmpty
         ($names | Where-Object { $_.name -eq 'FeatureSettingsOverride' -and $_.value -eq '3' }) | Should -Not -BeNullOrEmpty
     }
 
-    It 'removes shell delays and shortens the close timeouts for instant window response' {
+    It 'sets the configured shell and application-shutdown values' {
         $byName = @{}
         foreach ($entry in $profile.registry) { $byName["$($entry.group)/$($entry.name)"] = $entry.value }
 
@@ -202,52 +200,35 @@ Describe 'Gaming power settings JSON' {
         $power | Should -Not -BeNullOrEmpty
     }
 
-    It 'uses the Ultimate Performance template, because that is what Atlas derives from' {
-        # Verified against the live Atlas scheme: 25 of its 27 visible settings are
-        # byte-identical to Ultimate Performance. Duplicating any other base would not
-        # reproduce it, so this must NOT be changed to High performance.
+    It 'uses the configured base template and exports a project-named scheme' {
+        # This tests configuration only; it is not evidence of an AtlasOS match or
+        # a performance result on any Windows build or hardware.
         $power.baseTemplate.guid | Should -Be 'e9a42b02-d5df-448d-aa00-03f14749eb61'
+        @($power.baseTemplate.fallbacks | ForEach-Object { $_.name }) | Should -Contain 'High performance'
+        @($power.baseTemplate.fallbacks | ForEach-Object { $_.name }) | Should -Contain 'Balanced'
+        $power.schemeName | Should -Be 'Tiny11 Core-Gaming'
     }
 
-    It 'provides fallback templates' {
-        @($power.baseTemplate.fallbacks).Count | Should -BeGreaterThan 0
+    It 'does not include unsupported live power-plan capture metadata' {
+        $power.PSObject.Properties.Name | Should -Not -Contain 'matchedAgainst'
+        foreach ($setting in $power.settings) {
+            $setting.PSObject.Properties.Name | Should -Not -Contain 'atlasOverride'
+            $setting.PSObject.Properties.Name | Should -Not -Contain 'beyondAtlas'
+        }
     }
 
-    It 'records what it was matched against' {
-        $power.matchedAgainst.guid | Should -Be '11111111-1111-1111-1111-111111111111'
-        $power.matchedAgainst.name | Should -Be 'Atlas Power Scheme'
-        $power.matchedAgainst.finding | Should -Match 'Ultimate Performance'
-    }
-
-    It 'carries all 27 settings from the live Atlas scheme' {
-        $atlasSettings = @($power.settings | Where-Object { -not ($_.PSObject.Properties['beyondAtlas'] -and $_.beyondAtlas) })
-        $atlasSettings.Count | Should -Be 27
-    }
-
-    It 'marks exactly the two settings that differ from Ultimate Performance' {
-        $overrides = @($power.settings | Where-Object { $_.PSObject.Properties['atlasOverride'] -and $_.atlasOverride })
-        $overrides.Count | Should -Be 2
-        @($overrides | ForEach-Object { $_.setting }) | Should -Contain '48e6b7a6-50f5-4782-a5d4-53bb8f07e226'
-        @($overrides | ForEach-Object { $_.setting }) | Should -Contain '3c0bc021-c8a8-4e07-a973-6b14cbcb2b7e'
-    }
-
-    It 'matches the Atlas values for the two overrides' {
-        $usb = $power.settings | Where-Object { $_.setting -eq '48e6b7a6-50f5-4782-a5d4-53bb8f07e226' }
-        $usb.ac | Should -Be 0
-        $usb.dc | Should -Be 1
-
-        $display = $power.settings | Where-Object { $_.setting -eq '3c0bc021-c8a8-4e07-a973-6b14cbcb2b7e' }
-        $display.ac | Should -Be 0
-        $display.dc | Should -Be 180
-    }
-
-    It 'keeps the CPU-idle divergence gated behind its own group and flagged' {
-        # Atlas leaves CPU idle ENABLED. Ours disables it, so it must be both
-        # independently switchable and labelled as a divergence.
-        $idle = $power.settings | Where-Object { $_.setting -eq '5d76a2ca-e8c0-402f-a133-2158492d58ad' }
-        $idle | Should -Not -BeNullOrEmpty
-        $idle.group | Should -Be 'disable_cpu_idle'
-        $idle.beyondAtlas | Should -BeTrue
+    It 'uses only known gaming groups for optional power and boot settings' {
+        $knownGroups = @($profile.defaultGroups.PSObject.Properties.Name)
+        foreach ($setting in $power.settings) {
+            if ($setting.PSObject.Properties['group']) {
+                $knownGroups | Should -Contain $setting.group
+            }
+        }
+        foreach ($entry in $power.bcd) {
+            if ($entry.PSObject.Properties['group']) {
+                $knownGroups | Should -Contain $entry.group
+            }
+        }
     }
 
     It 'gives every power setting a subgroup, GUID, and AC/DC value' {
@@ -278,7 +259,6 @@ Describe 'Gaming power settings JSON' {
         $epp | Should -Not -BeNullOrEmpty
         $epp.ac | Should -Be 0
         $epp.group | Should -Be 'disable_cpu_idle'
-        $epp.beyondAtlas | Should -BeTrue
 
         $boost = $power.settings | Where-Object { $_.setting -eq '45bcc044-d885-43e2-8605-ee0ec6e96b59' }
         $boost | Should -Not -BeNullOrEmpty
@@ -298,8 +278,8 @@ Describe 'Gaming power settings JSON' {
     }
 
     It 'deletes useplatformtick instead of setting it' {
-        # Forcing the platform tick source is slower than the invariant TSC, so the
-        # profile must never re-introduce it.
+        # The profile clears an explicit override left by older versions; it makes no
+        # universal claim about timer sources or performance.
         ($power.bcd | Where-Object { $_.args -match '/set\s+useplatformtick\s+yes' }) | Should -BeNullOrEmpty
         ($power.bcd | Where-Object { $_.args -match '/deletevalue\s+useplatformtick' }) | Should -Not -BeNullOrEmpty
     }
@@ -424,9 +404,9 @@ Describe 'First-boot and undo scripts' {
         }
     }
 
-    It 'only enables MSI where the driver already publishes MSI properties' {
-        # This is the safety property: forcing MSI on a device that cannot do it is how
-        # a latency tweak turns into a machine that will not boot.
+    It 'only attempts MSI writes when an MSI-related device registry key exists' {
+        # The script limits attempts to instances that expose this registry path. The
+        # presence of the key is not proof that the driver supports the requested value.
         $content = Get-Content -LiteralPath $firstBootPath -Raw
         $content | Should -Match 'MessageSignaledInterruptProperties'
         $content | Should -Match 'Test-Path -LiteralPath \$msiKey'
@@ -462,17 +442,62 @@ Describe 'Core-Gaming workflow' {
     }
 
     It 'is named as requested' {
-        $workflowRaw | Should -Match '(?m)^name:\s*Build and Release Tiny11 Core-Gaming\s*$'
+        $workflowRaw | Should -Match '(?m)^name:\s*Build Tiny11 Core-Gaming \(VM/Lab\)\s*$'
     }
 
-    It 'preserves every input from the Core workflow' {
+    It 'preserves supported Core inputs and excludes custom or unsafe source overrides' {
         foreach ($input in @(
-            'windows_version', 'windows_iso_url', 'windows_build', 'image_index',
-            'language', 'skip_cleanup', 'enable_dotnet35', 'preserve_winre',
-            'remove_defender', 'account_setup'
+            'windows_version', 'windows_build', 'image_index', 'image_edition',
+            'language', 'skip_cleanup', 'enable_dotnet35', 'preserve_winre', 'account_setup'
         )) {
             $workflowRaw | Should -Match "(?m)^\s{6}$([regex]::Escape($input)):"
         }
+        $workflowRaw | Should -Not -Match '(?m)^\s{6}(?:windows_iso_url|remove_defender|bypass_hardware_requirements|expected_iso_path):'
+        $workflowRaw | Should -Match "default: '0'"
+        $workflowRaw | Should -Match "default: 'Pro'"
+        $workflowRaw | Should -Match "default: 'classic'"
+        $workflowRaw | Should -Match 'REQUESTED_IMAGE_INDEX: \$\{\{ inputs.image_index \}\}'
+        $workflowRaw | Should -Match '\$buildInfo\.source_index'
+        $workflowRaw | Should -Match '\$buildInfo\.edition'
+    }
+
+    It 'resolves Windows media with the Microsoft resolver' {
+        $workflowRaw | Should -Match 'resolve-windows-iso\.ps1'
+        $workflowRaw | Should -Match '\$uri\.Host -notin'
+        $workflowRaw | Should -Match 'software\.download\.prss\.microsoft\.com'
+    }
+
+    It 'does not publish build output permanently' {
+        $workflowRaw | Should -Not -Match '(?i)sourceforge|softprops/action-gh-release'
+        $workflowRaw | Should -Not -Match '(?m)^\s*contents:\s*write'
+    }
+
+    It 'uses temporary upload-artifact storage with seven-day retention' {
+        $workflowRaw | Should -Match 'actions/upload-artifact@v7'
+        $retentionDays = @(
+            [regex]::Matches($workflowRaw, '(?m)^[ \t]*retention-days:[ \t]*(\d+)[ \t]*\r?$') |
+                ForEach-Object { [int]$_.Groups[1].Value }
+        )
+        $retentionDays | Should -Not -BeNullOrEmpty
+        foreach ($days in $retentionDays) { $days | Should -Be 7 }
+    }
+
+    It 'masks signed ISO URLs in logs and does not truncate them unsafely' {
+        $workflowRaw | Should -Match 'add-mask::\$\(\$iso\.Url\)'
+        $workflowRaw | Should -Not -Match 'Substring\(0,\s*100\)'
+    }
+
+    It "declares 24 dispatch inputs and stays under GitHub's 25-input maximum" {
+        $start = $workflowRaw.IndexOf('workflow_dispatch:')
+        $end   = $workflowRaw.IndexOf("`nenv:", $start)
+        $start | Should -BeGreaterThan 0
+        $end | Should -BeGreaterThan $start
+        $inputsBlock = $workflowRaw.Substring($start, $end - $start)
+        $inputs = [regex]::Matches($inputsBlock, '(?m)^\s{6}([a-z0-9_]+):') |
+            ForEach-Object { $_.Groups[1].Value }
+        $inputCount = @($inputs).Count
+        $inputCount | Should -Be 24
+        ($inputCount -le 25) | Should -BeTrue
     }
 
     It 'adds a toggle for every gaming group' {
@@ -480,7 +505,7 @@ Describe 'Core-Gaming workflow' {
             'hags', 'atlas_power_scheme', 'disable_cpu_idle', 'disable_security_mitigations',
             'remove_xbox_gaming_stack', 'strip_background_noise', 'instant_windows',
             'disable_fast_startup',
-            'network_latency_tweaks', 'disable_mpo', 'latency_input_tweaks', 'disable_fso',
+            'network_latency_tweaks', 'disable_mpo', 'latency_input_tweaks', 'interrupt_latency', 'disable_fso',
             'disable_game_mode', 'disable_printing'
         )) {
             $workflowRaw | Should -Match "(?m)^\s{6}$([regex]::Escape($input)):"
@@ -497,7 +522,7 @@ Describe 'Core-Gaming workflow' {
         $end   | Should -BeGreaterThan $start
         $inputsBlock = $workflowRaw.Substring($start, $end - $start)
 
-        $gamingInputs = [regex]::Matches($inputsBlock, '(?m)^\s{6}([a-z_]+):') |
+        $gamingInputs = [regex]::Matches($inputsBlock, '(?m)^\s{6}([a-z0-9_]+):') |
             ForEach-Object { $_.Groups[1].Value }
 
         foreach ($group in @($profile.defaultGroups.PSObject.Properties.Name)) {
@@ -572,6 +597,27 @@ Describe 'Profile engine functional behaviour' {
             Should -Not -Throw
     }
 
+    It 'stages the active custom profile rather than silently copying the default file' {
+        $customProfile = $script:EngineProfile | ConvertTo-Json -Depth 100 | ConvertFrom-Json
+        $customProfile.profile = 'custom-core-gaming-test'
+        $customRoot = Join-Path ([System.IO.Path]::GetTempPath()) `
+            ("tiny11-gaming-custom-test-" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        $customScratch = Join-Path $customRoot 'scratchdir'
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $customScratch 'Windows\System32\config') | Out-Null
+            New-GamingFirstBootPayload -Profile $customProfile -Groups $script:TestGroups `
+                -ScratchDir $customScratch -ScriptRoot (Join-Path $repoRoot 'scripts') -HagsMode 'on' |
+                Out-Null
+            $stagedPath = Join-Path $customScratch 'Windows\Tiny11Gaming\gaming_profile.json'
+            $staged = Get-Content -LiteralPath $stagedPath -Raw | ConvertFrom-Json
+            $staged.profile | Should -Be 'custom-core-gaming-test'
+        } finally {
+            if (Test-Path -LiteralPath $customRoot) {
+                Remove-Item -LiteralPath $customRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
     It 'stages every file the target machine needs' {
         foreach ($name in @(
             'gaming-firstboot.ps1',
@@ -591,11 +637,27 @@ Describe 'Profile engine functional behaviour' {
         (Get-Content -LiteralPath $setupComplete -Raw) | Should -Match 'gaming-firstboot\.ps1'
     }
 
-    It 'records the resolved group flags for the target machine' {
+    It 'records one typed flag for every profile group' {
         $groupsFile = Join-Path $script:GamingDir 'gaming_groups.json'
         $parsed = Get-Content -LiteralPath $groupsFile -Raw | ConvertFrom-Json
         $parsed.groups.disable_mpo | Should -BeFalse
         $parsed.hagsMode | Should -Be 'on'
+        $flagNames = @($parsed.groups.PSObject.Properties.Name)
+        $expectedGroups = @($profile.defaultGroups.PSObject.Properties.Name)
+        $flagNames.Count | Should -Be $expectedGroups.Count
+        foreach ($group in $expectedGroups) {
+            $flagNames | Should -Contain $group
+            ($parsed.groups.PSObject.Properties[$group].Value -is [bool]) | Should -BeTrue
+        }
+    }
+
+    It 'fails closed instead of enabling defaults when first-boot group flags are missing or invalid' {
+        $content = Get-Content -LiteralPath $firstBootPath -Raw
+        $content | Should -Match 'Invalid or missing gaming group configuration; aborting first-boot changes'
+        $content | Should -Match '\$missingGroups'
+        $content | Should -Match '\$unknownGroups'
+        $content | Should -Match '\$prop\.Value -isnot \[bool\]'
+        $content | Should -Not -Match 'assuming all groups enabled'
     }
 
     It 'writes a manifest listing what was applied and what cannot be undone' {

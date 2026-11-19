@@ -3,15 +3,15 @@
   "title": "Tiny11 Version Matrix Configuration",
   "description": "Configuration and tracking schema for automated Windows release detection",
   "version": "1.0.0",
-  "author": "kelexine (https://github.com/kelexine)",
+  "author": "NggKhaiz (fork maintainer); kelexine (automation credit); ntdevlabs (original builder)",
   "config": {
     "monitoring": {
       "enabled": true,
-      "check_interval_hours": 24,
-      "force_check_on_manual_trigger": true,
+      "check_interval_hours": 168,
+      "force_check_on_manual_trigger": false,
       "sources": {
         "uupdump": {
-          "enabled": true,
+          "enabled": false,
           "api_url": "https://api.uupdump.net",
           "timeout_seconds": 30,
           "max_results": 30,
@@ -20,7 +20,8 @@
           ],
           "languages": [
             "en-us"
-          ]
+          ],
+          "note": "Detection reference only; UUP packages are not direct ISO URLs and are not dispatched to build workflows."
         },
         "microsoft_direct": {
           "enabled": true,
@@ -51,37 +52,39 @@
       ]
     },
     "build_triggers": {
-      "auto_trigger_enabled": true,
-      "trigger_on_detection": true,
+      "auto_trigger_enabled": false,
+      "trigger_on_detection": false,
       "delay_minutes": 5,
       "build_types": {
         "standard": {
           "enabled": true,
           "workflow": "build-tiny11.yml",
           "editions": [
-            1,
-            6
+            "Pro",
+            "Home"
           ],
-          "priority": 1
+          "priority": 1,
+          "profile": "Standard/SafeLite; physical machines and daily use"
         },
         "core": {
           "enabled": true,
           "workflow": "build-tiny11-core.yml",
           "editions": [
-            1,
-            6
+            "Pro",
+            "Home"
           ],
           "priority": 2,
-          "enable_dotnet35": false
+          "enable_dotnet35": false,
+          "profile": "VM/LabCore; experimental, not a primary OS"
         },
         "nano": {
-          "enabled": true,
+          "enabled": false,
           "workflow": "build-nano11.yml",
           "editions": [
-            1,
-            6
+            "Pro"
           ],
-          "priority": 3
+          "priority": 3,
+          "profile": "VM/LabNano; extreme, manual-only"
         }
       }
     },
@@ -114,16 +117,15 @@
       }
     },
     "distribution": {
-      "sourceforge": {
+      "github_actions_artifacts": {
         "enabled": true,
-        "auto_upload": false,
-        "project_name": "tiny-11-releases",
-        "api_key_secret": "SOURCEFORGE_API_KEY"
+        "purpose": "temporary testing only",
+        "retention_days": 7,
+        "permanent_hosting": false
       },
       "github_releases": {
-        "enabled": true,
-        "create_draft": true,
-        "attach_checksums": true
+        "enabled": false,
+        "note": "No permanent release-hosting decision has been made."
       }
     },
     "testing": {
@@ -136,9 +138,32 @@
       "test_suites": [
         "boot",
         "install",
-        "basic_functionality"
+        "basic_functionality",
+        "windows_update",
+        "defender",
+        "winre",
+        "printing_standard_profile"
       ],
       "test_timeout_minutes": 60
+    },
+    "performance_validation": {
+      "enabled": false,
+      "required_before_public_release": true,
+      "metrics": [
+        "idle_ram",
+        "boot_to_responsive_time",
+        "idle_cpu",
+        "disk_io",
+        "install_size"
+      ],
+      "required_functional_checks": [
+        "windows_update",
+        "defender",
+        "winre",
+        "printing",
+        "drivers"
+      ],
+      "interpretation": "ISO/ESD/Compact size is a storage metric, not a RAM or CPU performance result."
     }
   },
   "tracking_schema": {
@@ -293,36 +318,37 @@
   },
   "example_tracking_data": {
     "builds": {
-      "abc123-def456": {
-        "build_id": "abc123-def456",
-        "build_number": "26100",
-        "version": "24H2",
-        "title": "Windows 11 Professional 24H2 Build 26100",
-        "iso_url": "https://uupdump.net/download.php?id=abc123-def456&pack=en-us&edition=professional",
-        "detected_date": "2025-12-21T09:26:00Z",
+      "msft-playwright-25h2-example1234": {
+        "build_id": "msft-playwright-25h2-example1234",
+        "build_number": "Latest",
+        "version": "25H2",
+        "title": "Windows 11 25H2",
+        "iso_url": "https://software.download.prss.microsoft.com/dbazure/Win11_25H2_English_x64_v2.iso",
+        "detected_date": "2026-10-04T00:00:00Z",
         "architecture": "amd64",
         "channel": "retail",
         "language": "en-us",
         "checksum_sha256": null,
         "size_bytes": null,
+        "iso_fingerprint": "",
         "builds_triggered": {
-          "standard": true,
-          "core": true,
-          "nano": true
+          "standard": false,
+          "core": false,
+          "nano": false
         },
         "builds_completed": {
-          "standard": true,
-          "core": true,
+          "standard": false,
+          "core": false,
           "nano": false
         }
       }
     },
-    "last_check": "2025-12-21T09:26:00Z",
-    "check_count": 42,
+    "last_check": "2026-10-04T00:00:00Z",
+    "check_count": 1,
     "metadata": {
       "version": "1.0.0",
-      "created": "2025-12-01T00:00:00Z",
-      "updated": "2025-12-21T09:26:00Z"
+      "created": "2026-10-04T00:00:00Z",
+      "updated": "2026-10-04T00:00:00Z"
     }
   },
   "github_actions_outputs": {
@@ -342,14 +368,14 @@
       },
       "releases_matrix": {
         "type": "string",
-        "description": "JSON object for GitHub Actions matrix strategy"
+        "description": "JSON array of detected release records. The workflow expands each into Standard/Core × Home/Pro dispatch jobs."
       }
     }
   },
   "notes": {
-    "author": "kelexine",
-    "github": "https://github.com/kelexine/tiny11-automated",
-    "purpose": "Automate detection and building of Tiny11 variants for new Windows releases",
-    "license": "MIT"
+    "author": "NggKhaiz (fork maintainer)",
+    "github": "https://github.com/NggKhaiz/TINY11-AUTOMATION",
+    "purpose": "Detect Microsoft Windows 11 x64 ISO releases and optionally dispatch test builds.",
+    "license": "Not specified; this checkout has no LICENSE file."
   }
 }

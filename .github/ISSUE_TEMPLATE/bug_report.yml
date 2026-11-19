@@ -1,13 +1,13 @@
-# Bug Report Template for Tiny11 Automated
-# Author: kelexine
-# GitHub: https://github.com/kelexine/tiny11-automated
+# Bug Report Template for TINY11-AUTOMATION
+# Maintainer: NggKhaiz; automation credit: kelexine; original builder: ntdevlabs
+# GitHub: https://github.com/NggKhaiz/TINY11-AUTOMATION
 
 name: 🐛 Bug Report
-description: Report a bug or issue with Tiny11 Auto-Builder
+description: Report a bug or issue with TINY11-AUTOMATION
 title: "[BUG] "
 labels: ["bug", "needs-triage"]
 assignees:
-  - kelexine
+  - NggKhaiz
 
 body:
   - type: markdown
@@ -32,7 +32,7 @@ body:
       options:
         - label: I searched existing issues and found no duplicates
           required: true
-        - label: I'm using the latest release from GitHub or SourceForge
+        - label: I'm testing a temporary GitHub Actions artifact from this fork
           required: true
         - label: I've read the README and documentation
           required: true
@@ -226,9 +226,9 @@ body:
         
         ## What Happens Next?
         
-        1. **Triage** (24-48h): kelexine will review and label your issue
+        1. **Triage** (24-48h): NggKhaiz will review and label your issue
         2. **Investigation** (3-7 days): We'll investigate and may ask for more info
         3. **Fix** (varies): Depending on complexity, a fix will be developed
         4. **Release** (next release): Fix included in next version
         
-        **Thank you for helping improve Tiny11 Automated!** 🙏
+        **Thank you for helping improve TINY11-AUTOMATION!** 🙏

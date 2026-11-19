@@ -151,7 +151,7 @@ function New-GamingPowerScheme {
     }
 
     # 5. Export for portability so the user can move the scheme to another machine.
-    $powPath = Join-Path $GamingDir 'Atlas-Power-Scheme.pow'
+    $powPath = Join-Path $GamingDir 'Tiny11-Core-Gaming.pow'
     & powercfg -export $powPath $schemeGuid 2>&1 | Out-Null
     if (Test-Path -LiteralPath $powPath) {
         Write-Log "Exported scheme to $powPath"
@@ -216,7 +216,7 @@ function Set-GamingNetworkTweaks {
         Where-Object { $_.PSChildName -match '^\d{4}$' } |
         ForEach-Object {
             Set-ItemProperty -Path $_.PSPath -Name 'PnPCapabilities' -Value 24 -Type DWord -ErrorAction SilentlyContinue
-            # Wireless adapters additionally expose a power-save mode; 0 = max performance.
+            # Request wireless adapter power saving off; driver behavior varies.
             Set-ItemProperty -Path $_.PSPath -Name '*PowerSaveMode' -Value 0 -Type DWord -ErrorAction SilentlyContinue
             $nics++
         }
@@ -229,27 +229,19 @@ function Set-GamingNetworkTweaks {
 # It is also the half of the profile that Core cannot do at all: Core works on
 # install.wim, where the PnP tree of the target machine does not exist yet.
 #
-# The target is 1% lows, not average FPS. Average FPS is set by the GPU and the
-# CPU frequency; 1% lows are set by how long a frame waits for something else to
-# finish - a DPC, an interrupt shared with another device, a NIC that batched its
-# packets, a storage link that had to wake up. That is what these four functions
-# address.
+# These are experimental device settings. Their effect on frame times, input
+# response, power, throughput and stability depends on hardware, drivers and the
+# workload. This project has not benchmarked them; do not infer an improvement from
+# the setting name or from a successful registry write.
 
 function Set-GamingInterruptLatency {
-    # MSI (message-signalled interrupts) replace line-based interrupts with a
-    # memory write, so a device no longer shares an IRQ line with whatever else
-    # the firmware happened to put there. A shared line means one device's ISR
-    # delays another's, which is exactly how a GPU frame gets held up by a NIC.
+    # MSI is a per-device driver setting. This code only attempts devices whose
+    # registry tree already contains MessageSignaledInterruptProperties, but that
+    # key is not proof that changing the value is supported or safe. The write is
+    # best-effort and may require a reboot; this code cannot guarantee boot safety.
     #
-    # Safety: only devices that already publish MessageSignaledInterruptProperties
-    # are touched. That key is written by a driver that supports MSI, so a device
-    # that cannot do MSI is never forced into it. A device that rejects the flag
-    # keeps its line interrupt and still boots - this cannot brick anything.
-    #
-    # DevicePolicy (interrupt affinity) is deliberately NOT set. Pinning a GPU's
-    # interrupts to specific cores is a per-machine experiment whose right answer
-    # depends on the core topology; a wrong default here is worse than the machine
-    # default Windows already picks.
+    # DevicePolicy (interrupt affinity) is deliberately not set. Any affinity
+    # experiment would require per-machine validation of the CPU topology and driver.
     $classGuids = @{
         '{4d36e968-e325-11ce-bfc1-08002be10318}' = 'display'
         '{4d36e972-e325-11ce-bfc1-08002be10318}' = 'network'
@@ -308,8 +300,8 @@ function Set-GamingInterruptLatency {
                 }
             }
 
-            # Priority is a hint the kernel honours when two ISRs are ready at once.
-            # 'High' is what the GPU and the NIC want; everything else keeps Normal.
+            # Write a DevicePriority hint for display/network devices. Whether the
+            # driver and Windows honor it, and with what effect, is unverified.
             if ($classGuids[$classGuid] -eq 'display' -or $classGuids[$classGuid] -eq 'network') {
                 $affinityKey = "$($instance.PSPath)\Device Parameters\Interrupt Management\Affinity Policy"
                 try {
@@ -332,21 +324,21 @@ function Set-GamingNetworkAdapter {
     # written independently and failures are counted, not thrown: an adapter that
     # does not expose '*RSS' is normal (most Wi-Fi and USB dongles), not an error.
     #
-    # -NoRestart on purpose. SetupComplete runs before the first logon and the
-    # settings are read by the driver at its next load; bouncing the adapter here
-    # would only risk hanging setup with no benefit.
+    # -NoRestart avoids resetting network adapters during SetupComplete. Drivers
+    # may require a later restart to apply a changed property; this is not verified
+    # uniformly across vendors.
     if (-not (Get-Command Set-NetAdapterAdvancedProperty -ErrorAction SilentlyContinue)) {
         Write-Log "  NetAdapter module unavailable - NIC advanced properties skipped" 'WARN'
         return
     }
 
     $properties = [ordered]@{
-        '*InterruptModeration' = 0   # batch interrupts -> latency spike per batch
-        '*RSS'                 = 1   # receive queues spread across cores
-        '*EEE'                 = 0   # energy-efficient ethernet: idle link sleep
-        '*FlowControl'         = 0   # pause frames stall the queue
-        '*RscIPv4'             = 0   # receive segment coalescing delays delivery
-        '*LsoV2IPv4'           = 0   # large send offload batches transmit
+        '*InterruptModeration' = 0
+        '*RSS'                 = 1
+        '*EEE'                 = 0
+        '*FlowControl'         = 0
+        '*RscIPv4'             = 0
+        '*LsoV2IPv4'           = 0
     }
 
     $adapters = @(Get-NetAdapter -Physical -ErrorAction SilentlyContinue)
@@ -374,11 +366,9 @@ function Set-GamingNetworkAdapter {
 }
 
 function Set-GamingUsbPower {
-    # A USB mouse that Windows may suspend is a mouse that has to wake its port
-    # before it can report movement. That does not show up as input lag on the
-    # average, it shows up as an occasional late frame - the same class of problem
-    # as a parked core. Selective suspend is already off at the power-scheme level;
-    # these are the per-device switches underneath it.
+    # These per-device values request USB/HID power-management changes. Device and
+    # driver behavior varies; they may be ignored or increase power use. No input-
+    # latency or frame-time effect has been measured by this project.
     $roots = @(
         'HKLM:\SYSTEM\CurrentControlSet\Enum\USB',
         'HKLM:\SYSTEM\CurrentControlSet\Enum\HID'
@@ -416,11 +406,10 @@ function Set-GamingUsbPower {
 }
 
 function Set-GamingMemoryCompression {
-    # Memory compression trades CPU for RAM: when the system is under pressure it
-    # compresses pages instead of paging them out. On a 16 GB+ gaming machine that
-    # trade is backwards - the compression worker shows up as a CPU spike exactly
-    # when the game is streaming assets. Below 16 GB the trade is worth keeping,
-    # so this is deliberately conditional.
+    # Experimental policy: disable memory compression only at/above the configured
+    # RAM threshold. Compression trades memory footprint against CPU work and paging;
+    # disabling it can increase memory pressure or disk paging. The 16 GB threshold
+    # is not benchmark-derived, so test both states under the target workload.
     $ram = $null
     try {
         $ram = (Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction Stop).TotalPhysicalMemory
@@ -523,9 +512,8 @@ function Invoke-EssentialsFirstBoot {
         }
     }
 
-    # 4. Process count. Recorded for the build log so the claim can be checked against
-    #    something. Note this is the SetupComplete session, not an interactive desktop -
-    #    expect it to read lower than Task Manager after logon.
+    # 4. Process count. This is a SetupComplete-session snapshot, not an interactive
+    #    desktop benchmark and not a claim about resource use after logon.
     if ($fb.reportProcessCount) {
         try {
             $count = @(Get-Process).Count
@@ -559,23 +547,51 @@ $groupsFile = Join-Path $GamingDir 'gaming_groups.json'
 $essentialsConfig = Join-Path $GamingDir 'essentials_profile.json'
 
 $groups = @{}
-if (Test-Path -LiteralPath $groupsFile) {
-    try {
-        $groupsJson = Get-Content -LiteralPath $groupsFile -Raw | ConvertFrom-Json
-        foreach ($prop in $groupsJson.groups.PSObject.Properties) {
-            $groups[$prop.Name] = [bool]$prop.Value
-        }
-        Write-Log "Loaded $($groups.Count) group flag(s) from gaming_groups.json"
-    } catch {
-        Write-Log "Could not parse gaming_groups.json ($_) - assuming all groups enabled" 'WARN'
+try {
+    $profileFile = Join-Path $GamingDir 'gaming_profile.json'
+    if (-not (Test-Path -LiteralPath $profileFile)) {
+        throw "gaming_profile.json not found at $profileFile"
     }
-} else {
-    Write-Log "gaming_groups.json not found - assuming all groups enabled" 'WARN'
+    if (-not (Test-Path -LiteralPath $groupsFile)) {
+        throw "gaming_groups.json not found at $groupsFile"
+    }
+
+    $profileConfig = Get-Content -LiteralPath $profileFile -Raw | ConvertFrom-Json
+    $groupConfig = Get-Content -LiteralPath $groupsFile -Raw | ConvertFrom-Json
+    if (-not $profileConfig.defaultGroups) {
+        throw "gaming_profile.json has no defaultGroups object"
+    }
+    if (-not $groupConfig.groups) {
+        throw "gaming_groups.json has no groups object"
+    }
+    if ($groupConfig.profile -ne $profileConfig.profile) {
+        throw "group file profile '$($groupConfig.profile)' does not match '$($profileConfig.profile)'"
+    }
+
+    $expectedGroups = @($profileConfig.defaultGroups.PSObject.Properties | ForEach-Object { $_.Name })
+    $flagProperties = @($groupConfig.groups.PSObject.Properties)
+    $flagNames = @($flagProperties | ForEach-Object { $_.Name })
+    $missingGroups = @($expectedGroups | Where-Object { $flagNames -notcontains $_ })
+    $unknownGroups = @($flagNames | Where-Object { $expectedGroups -notcontains $_ })
+    if ($missingGroups.Count -gt 0 -or $unknownGroups.Count -gt 0) {
+        throw "group flags do not match profile (missing: $($missingGroups -join ', '); unknown: $($unknownGroups -join ', '))"
+    }
+
+    foreach ($prop in $flagProperties) {
+        if ($prop.Value -isnot [bool]) {
+            throw "group '$($prop.Name)' must have a JSON boolean value"
+        }
+        $groups[$prop.Name] = $prop.Value
+    }
+    Write-Log "Loaded and validated $($groups.Count) group flag(s) from gaming_groups.json"
+} catch {
+    Write-Log "Invalid or missing gaming group configuration; aborting first-boot changes: $_" 'ERROR'
+    exit 1
 }
 
 function Test-GroupEnabled {
     param([string]$Name)
-    if (-not $groups.ContainsKey($Name)) { return $true }
+    if (-not $groups.ContainsKey($Name)) { return $false }
     return [bool]$groups[$Name]
 }
 

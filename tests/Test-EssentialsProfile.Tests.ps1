@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Pester tests for the Tiny11 Core-Gaming essentials pass.
 
@@ -317,12 +317,13 @@ Describe 'Builder wiring' {
 Describe 'Not toggleable' {
 
     It 'has no workflow input for the essentials layer' {
-        # The workflow is at GitHub's 25-input cap, and the layer is meant to be part
-        # of the build rather than an option. If a toggle is ever added, this test
-        # should fail and force the conversation.
+        # GitHub allows at most 25 dispatch inputs. Keep the mandatory essentials
+        # layer untoggleable and leave room for future safety controls.
         $inputsBlock = [regex]::Match($workflowRaw, '(?ms)^on:.*?^env:').Value
         $inputsBlock | Should -Not -BeNullOrEmpty
         $inputsBlock | Should -Not -Match '(?m)^\s{6}essentials'
+        $inputCount = [regex]::Matches($inputsBlock, '(?m)^\s{6}[a-z_]+:').Count
+        $inputCount | Should -BeLessOrEqual 25
 
         # And it must never be passed to the builder as a switch.
         $workflowRaw | Should -Not -Match '\-Essentials\b'

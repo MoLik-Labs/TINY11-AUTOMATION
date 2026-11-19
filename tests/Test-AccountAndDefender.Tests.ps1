@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Unit tests for the local-account setup modes and the Defender removal switch
     added to the *-headless.ps1 builders.
@@ -17,14 +17,35 @@ BeforeAll {
             [Parameter(Mandatory = $true)][int]$Index,
             [Parameter(Mandatory = $false)]
             [ValidateSet('auto-admin', 'classic')]
-            [string]$AccountMode = 'auto-admin'
+            [string]$AccountMode = 'classic',
+            [Parameter(Mandatory = $false)]
+            [bool]$Compact = $false
         )
 
-        $c = [regex]::Replace(
-            $Content,
-            '(<Key>/IMAGE/INDEX</Key>\s*<Value>)\d+(</Value>)',
-            ('${1}' + $Index + '${2}')
+        $imageIndexPattern = '(?s)<!--.*?-->|(?<imageIndex>(?<prefix><Key>/IMAGE/INDEX</Key>\s*<Value>)\d+(?<suffix>\s*</Value>))'
+        $imageIndexMatches = @(
+            [regex]::Matches($Content, $imageIndexPattern) |
+                Where-Object { $_.Groups['imageIndex'].Success }
         )
+        if ($imageIndexMatches.Count -ne 1) {
+            throw 'Answer-file template must contain exactly one /IMAGE/INDEX placeholder.'
+        }
+        $imageIndexMatch = $imageIndexMatches[0]
+        $imageIndexReplacement = $imageIndexMatch.Groups['prefix'].Value + $Index + $imageIndexMatch.Groups['suffix'].Value
+        $c = $Content.Remove($imageIndexMatch.Index, $imageIndexMatch.Length).Insert($imageIndexMatch.Index, $imageIndexReplacement)
+
+        $compactText = $Compact.ToString().ToLowerInvariant()
+        $compactPattern = '(?s)<!--.*?-->|(?<compact>(?<prefix><Compact>\s*)(?:true|false)(?<suffix>\s*</Compact>))'
+        $compactMatches = @(
+            [regex]::Matches($c, $compactPattern) |
+                Where-Object { $_.Groups['compact'].Success }
+        )
+        if ($compactMatches.Count -ne 1) {
+            throw 'Answer-file template must contain exactly one Compact element.'
+        }
+        $compactMatch = $compactMatches[0]
+        $compactReplacement = $compactMatch.Groups['prefix'].Value + $compactText + $compactMatch.Groups['suffix'].Value
+        $c = $c.Remove($compactMatch.Index, $compactMatch.Length).Insert($compactMatch.Index, $compactReplacement)
 
         if ($AccountMode -eq 'classic') {
             $c = [regex]::Replace($c, '(?s)\s*<UserAccounts>.*?</UserAccounts>', '')
@@ -42,34 +63,10 @@ BeforeAll {
     $script:StdFlow    = Join-Path $script:RepoRoot '.github\workflows\build-tiny11.yml'
 }
 
-Describe "Answer file: auto-admin account mode (default)" {
+Describe "Answer file: classic local-account OOBE is the safe default" {
 
     BeforeAll {
-        $script:AutoAdmin = Invoke-AnswerFileTransform -Content $script:Template -Index 6
-    }
-
-    It "keeps the pre-created local Admin account" {
-        $script:AutoAdmin | Should -Match '<Name>Admin</Name>'
-        $script:AutoAdmin | Should -Match '<Group>Administrators</Group>'
-    }
-
-    It "keeps auto-logon on first boot" {
-        $script:AutoAdmin | Should -Match '<AutoLogon>'
-    }
-
-    It "rewrites /IMAGE/INDEX to the requested edition" {
-        $script:AutoAdmin | Should -Match '<Key>/IMAGE/INDEX</Key>\s*<Value>6</Value>'
-    }
-
-    It "remains well-formed XML" {
-        { [xml]$script:AutoAdmin } | Should -Not -Throw
-    }
-}
-
-Describe "Answer file: classic account mode" {
-
-    BeforeAll {
-        $script:Classic = Invoke-AnswerFileTransform -Content $script:Template -Index 6 -AccountMode 'classic'
+        $script:Classic = Invoke-AnswerFileTransform -Content $script:Template -Index 6
     }
 
     It "drops the pre-created account" {
@@ -100,6 +97,12 @@ Describe "Answer file: classic account mode" {
         $script:Classic | Should -Match '<Key>/IMAGE/INDEX</Key>\s*<Value>6</Value>'
     }
 
+    It "forces Compact OS deployment off for the safe Standard default" {
+        $classicDoc = [xml]$script:Classic
+        $classicCompact = $classicDoc.SelectSingleNode("//*[local-name()='Compact']")
+        $classicCompact.InnerText | Should -Be 'false'
+    }
+
     It "remains well-formed XML with the Shell-Setup component intact" {
         { [xml]$script:Classic } | Should -Not -Throw
         $doc = [xml]$script:Classic
@@ -110,6 +113,43 @@ Describe "Answer file: classic account mode" {
     }
 }
 
+Describe "Answer file: auto-admin is an explicit lab-only opt-in" {
+
+    BeforeAll {
+        $script:AutoAdmin = Invoke-AnswerFileTransform -Content $script:Template -Index 6 -AccountMode 'auto-admin' -Compact $true
+    }
+
+    It "keeps the pre-created local Admin and one-time auto-logon" {
+        $script:AutoAdmin | Should -Match '<Name>Admin</Name>'
+        $script:AutoAdmin | Should -Match '<Group>Administrators</Group>'
+        $script:AutoAdmin | Should -Match '<AutoLogon>'
+        $script:AutoAdmin | Should -Match '<LogonCount>1</LogonCount>'
+    }
+
+    It "uses a blank password only in the explicit auto-admin template" {
+        $doc = [xml]$script:AutoAdmin
+        $ns = New-Object System.Xml.XmlNamespaceManager -ArgumentList $doc.NameTable
+        $ns.AddNamespace('u', 'urn:schemas-microsoft-com:unattend')
+        $account = $doc.SelectSingleNode("//u:component[@name='Microsoft-Windows-Shell-Setup']/u:UserAccounts/u:LocalAccounts/u:LocalAccount", $ns)
+        $autoLogon = $doc.SelectSingleNode("//u:component[@name='Microsoft-Windows-Shell-Setup']/u:AutoLogon", $ns)
+        $account | Should -Not -BeNullOrEmpty
+        $autoLogon | Should -Not -BeNullOrEmpty
+        $account.SelectSingleNode('u:Password/u:Value', $ns).InnerText | Should -Be ''
+        $account.SelectSingleNode('u:Password/u:PlainText', $ns).InnerText | Should -Be 'true'
+        $autoLogon.SelectSingleNode('u:Password/u:Value', $ns).InnerText | Should -Be ''
+        $autoLogon.SelectSingleNode('u:Password/u:PlainText', $ns).InnerText | Should -Be 'true'
+    }
+
+    It "keeps the explicitly requested Compact template value" {
+        $autoAdminDoc = [xml]$script:AutoAdmin
+        $autoAdminDoc.SelectSingleNode("//*[local-name()='Compact']").InnerText | Should -Be 'true'
+    }
+
+    It "remains well-formed XML" {
+        { [xml]$script:AutoAdmin } | Should -Not -Throw
+    }
+}
+
 Describe "Builders expose the account-setup switch" {
 
     It "tiny11maker-headless.ps1 declares -AccountSetup and wires it into every answer-file write" {
@@ -117,6 +157,7 @@ Describe "Builders expose the account-setup switch" {
 
         $content | Should -Match ([regex]::Escape('[string]$AccountSetup'))
         $content | Should -Match ([regex]::Escape("[ValidateSet('auto-admin', 'classic')]"))
+        $content | Should -Match ([regex]::Escape("[string]`$AccountSetup = 'classic'"))
 
         $calls = ([regex]::Matches($content, 'Write-IsoAnswerFile -Destination')).Count
         $wired = ([regex]::Matches($content, '-AccountMode \$AccountSetup')).Count
@@ -129,11 +170,42 @@ Describe "Builders expose the account-setup switch" {
 
         $content | Should -Match ([regex]::Escape('[string]$AccountSetup'))
         $content | Should -Match ([regex]::Escape("[ValidateSet('auto-admin', 'classic')]"))
+        $content | Should -Match ([regex]::Escape("[string]`$AccountSetup = 'classic'"))
 
         $calls = ([regex]::Matches($content, 'Write-IsoAnswerFile -Destination')).Count
         $wired = ([regex]::Matches($content, '-AccountMode \$AccountSetup')).Count
         $calls | Should -BeGreaterThan 0
         $wired | Should -Be $calls
+    }
+
+    It "forces Compact OS off at both Standard answer-file write sites" {
+        $content = Get-Content -Path (Join-Path $script:RepoRoot 'scripts\tiny11maker-headless.ps1') -Raw
+        $calls = [regex]::Matches($content, '(?m)^\s*Write-IsoAnswerFile -Destination .+$')
+        $calls.Count | Should -Be 2
+        foreach ($call in $calls) {
+            $call.Value | Should -Match ([regex]::Escape('-Compact $false'))
+        }
+    }
+
+    It "fails closed if either required answer-file template value is missing or duplicated" {
+        foreach ($relativePath in @('scripts\tiny11maker-headless.ps1', 'scripts\tiny11coremaker-headless.ps1')) {
+            $content = Get-Content -Path (Join-Path $script:RepoRoot $relativePath) -Raw
+            $content | Should -Match 'exactly one /IMAGE/INDEX placeholder'
+            $content | Should -Match 'exactly one Compact element'
+        }
+    }
+
+    It "pins both builders' answer files to the final single-image index" {
+        foreach ($relativePath in @('scripts\tiny11maker-headless.ps1', 'scripts\tiny11coremaker-headless.ps1')) {
+            $content = Get-Content -Path (Join-Path $script:RepoRoot $relativePath) -Raw
+            $content | Should -Match ([regex]::Escape('[int]$ImageIndex = 1'))
+
+            $calls = [regex]::Matches($content, '(?m)^\s*Write-IsoAnswerFile -Destination .+$')
+            $calls.Count | Should -BeGreaterThan 0
+            foreach ($call in $calls) {
+                $call.Value | Should -Match ([regex]::Escape('-ImageIndex 1'))
+            }
+        }
     }
 }
 
@@ -198,10 +270,20 @@ Describe "Workflows expose the new toggles" {
         $content | Should -Match ([regex]::Escape('-AccountSetup $accountSetup'))
     }
 
-    It "build-tiny11.yml declares account_setup" {
+    It "build-tiny11.yml defaults to a safe classic account setup" {
         $content = Get-Content -Path $script:StdFlow -Raw
         $content | Should -Match 'account_setup:'
         $content | Should -Match ([regex]::Escape('-AccountSetup $accountSetup'))
+        $content | Should -Match "default: 'classic'"
+        $content | Should -Match ([regex]::Escape('ACCOUNT_SETUP: ${{ github.event_name == ''workflow_dispatch'' && github.event.inputs.account_setup || ''classic'' }}'))
+    }
+
+    It "build-tiny11-core.yml defaults to a safe classic account setup" {
+        $content = Get-Content -Path $script:CoreFlow -Raw
+        $content | Should -Match 'account_setup:'
+        $content | Should -Match ([regex]::Escape('-AccountSetup $accountSetup'))
+        $content | Should -Match "default: 'classic'"
+        $content | Should -Match ([regex]::Escape('ACCOUNT_SETUP: ${{ inputs.account_setup || ''classic'' }}'))
     }
 }
 

@@ -18,9 +18,9 @@
       2. Invoke-EssentialsServiceTweaks    (hives loaded)
       3. Invoke-EssentialsFirstBoot        (on the target machine, via SetupComplete.cmd)
 
-    Everything is best-effort: one missing service or one unavailable key logs a warning
-    and continues. A partially applied essentials pass is still a working image, and a
-    90-minute build should never fail over a single registry value.
+    Unavailable services, keys or first-boot operations are logged and skipped where
+    possible. A successful ISO build does not prove every requested setting was applied;
+    review the build and first-boot logs before testing the image.
 
 .NOTES
     Author: kelexine (https://github.com/kelexine)

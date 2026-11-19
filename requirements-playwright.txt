@@ -1,0 +1,3 @@
+# Microsoft ISO resolver dependency; keep this version in sync with the Playwright browser install.
+-r requirements-common.txt
+playwright==1.65.2

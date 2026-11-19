@@ -1,24 +1,24 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Tiny11 Automated - unattended answer file (Standard / Core)
+  TINY11-AUTOMATION answer-file template for the Standard and VM/Lab builders.
 
-  What this file guarantees:
-    * The install is completely OFFLINE. DynamicUpdate is disabled, so Setup never
-      contacts Windows Update, and no Microsoft account screen is ever reachable.
-    * A local administrator account is created automatically, out of the box.
-      Default credentials: user "Admin", blank password, auto-logon on first boot.
-      Change the four <Name>/<DisplayName>/<Username> values below if you want a
-      different account name (keep all four in sync).
-    * The Windows 11 TPM / Secure Boot / CPU / RAM checks are bypassed.
-    * EULA, OEM registration, Wi-Fi and privacy screens are skipped.
+  Builders rewrite /IMAGE/INDEX to the selected image's final media index and
+  transform account settings according to -AccountSetup. Both default to "classic",
+  which removes the pre-created Admin, blank password, auto-logon and first-logon
+  cleanup blocks below. Standard also forces <Compact>false</Compact>; Core/Lab keeps
+  this template's Compact setting.
 
-  SCHEMA NOTE (this was the bug in the previous version):
-  every <component> MUST live inside a <settings pass="..."> element. A component
-  placed directly under <unattend> makes the whole answer file unparseable, which
-  is why the old OOBE bypass silently did nothing.
+  DANGER: Using this XML directly, without running it through a builder, creates a
+  local Admin account with a blank password and one auto-logon. Do not deploy the
+  untransformed template on an internet-connected machine. auto-admin is an explicit
+  lab-only opt-in; classic is the safe builder default.
 
-  The /IMAGE/INDEX value below is a placeholder. The headless builders rewrite it
-  to match the -INDEX you passed so the correct edition is installed unattended.
+  This template does not bypass TPM, Secure Boot, CPU, RAM or storage checks. Those
+  checks remain enabled unless a VM/Lab workflow explicitly enables its testing-only
+  -BypassHardwareRequirements switch. DynamicUpdate controls Setup downloads only;
+  it does not disable Windows Update after installation.
+
+  Every <component> must be inside a <settings pass="..."> element.
 -->
 <unattend xmlns="urn:schemas-microsoft-com:unattend" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
 	<settings pass="windowsPE">

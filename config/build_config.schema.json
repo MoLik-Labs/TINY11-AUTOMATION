@@ -1,0 +1,65 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Tiny11 Standard custom ISO build configuration",
+  "description": "Change iso_url to start a custom-source Standard build. The JSON file is tracked by Git, so only use a URL safe for repository history.",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "const": "./build_config.schema.json",
+      "description": "Local schema reference for editor validation and completion."
+    },
+    "iso_url": {
+      "title": "Direct Windows ISO URL",
+      "description": "Public HTTPS direct-download link whose path ends in .iso. This value is committed to Git history; never put a private or expiring token here.",
+      "type": "string",
+      "default": "",
+      "anyOf": [
+        { "const": "" },
+        { "type": "string", "format": "uri", "pattern": "^https://" }
+      ]
+    },
+    "windows_version": {
+      "title": "Windows release label",
+      "description": "Usually leave as auto; the workflow infers a label from the URL filename and otherwise uses Custom.",
+      "type": "string",
+      "default": "auto",
+      "pattern": "^(?:auto|\\d{2}H\\d|Insider-[A-Za-z0-9-]+|Latest|Unknown|Custom)$"
+    },
+    "windows_build": {
+      "title": "Fallback build number",
+      "description": "Optional fallback used only when the build number cannot be read from the ISO metadata.",
+      "type": "string",
+      "default": "",
+      "pattern": "^(?:|\\d{5}(?:\\.\\d+)?|Latest|Unknown)$"
+    },
+    "image_edition": {
+      "title": "Windows edition",
+      "description": "The requested edition is selected by its actual image name when image_index is 0.",
+      "type": "string",
+      "enum": ["Home", "Pro", "Education", "Enterprise"],
+      "default": "Pro"
+    },
+    "image_index": {
+      "title": "Source image index",
+      "description": "Use 0 to select image_edition by actual image name; otherwise supply an index verified from this ISO.",
+      "type": "integer",
+      "minimum": 0,
+      "default": 0
+    },
+    "language": {
+      "title": "ISO language",
+      "type": "string",
+      "enum": ["English"],
+      "default": "English"
+    },
+    "skip_cleanup": {
+      "title": "Skip cleanup",
+      "description": "Debug only; normal cleanup is recommended.",
+      "type": "boolean",
+      "default": false
+    }
+  },
+  "required": ["iso_url"],
+  "additionalProperties": false
+}

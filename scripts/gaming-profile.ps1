@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Tiny11 Core-Gaming profile engine.
 
@@ -15,9 +15,9 @@
       3. Invoke-GamingServiceTweaks                                   (hives loaded)
       4. New-GamingFirstBootPayload                                   (image offline, before dismount)
 
-    Everything is best-effort: a single missing service or an unavailable DISM feature
-    logs a warning and continues, because a half-applied gaming profile is far better
-    than a failed 90-minute ISO build.
+    Some unavailable services or DISM features are logged and skipped. A successful
+    ISO build does not prove every requested setting was applied; review the build and
+    first-boot logs before using a test image.
 
 .NOTES
     Author: kelexine (https://github.com/kelexine)
@@ -633,15 +633,11 @@ function New-GamingFirstBootPayload {
         Write-GamingLog "  MISSING gaming_power_settings.json - power scheme will be skipped" 'WARN'
     }
 
-    # The full profile travels with the image so Undo-GamingTweaks.ps1 can read its
-    # revert block from the same source of truth the builder used.
-    $profileConfig = Get-GamingConfigPath 'gaming_profile.json'
-    if ($profileConfig) {
-        Copy-Item -LiteralPath $profileConfig -Destination (Join-Path $gamingDir 'gaming_profile.json') -Force
-        Write-GamingLog "  staged gaming_profile.json"
-    } else {
-        Write-GamingLog "  MISSING gaming_profile.json - revert will be unavailable" 'WARN'
-    }
+    # Stage the profile object actually imported by the builder. This preserves custom
+    # -GamingProfileFile groups and revert data instead of silently copying the default.
+    $profileDestination = Join-Path $gamingDir 'gaming_profile.json'
+    $Profile | ConvertTo-Json -Depth 100 | Out-File -LiteralPath $profileDestination -Encoding UTF8 -Force
+    Write-GamingLog "  staged gaming_profile.json from the active build profile"
 
     # Group flags consumed by gaming-firstboot.ps1 on the target machine.
     $groupsFile = [ordered]@{

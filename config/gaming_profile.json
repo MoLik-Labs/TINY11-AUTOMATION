@@ -2,7 +2,7 @@
   "schemaVersion": "1.0.0",
   "profile": "core-gaming",
   "title": "Tiny11 Core-Gaming",
-  "description": "Latency-first, AtlasOS-style profile for competitive esports on older hardware. Layers on top of the Tiny11 Core aggressive performance profile.",
+  "description": "Experimental, AtlasOS-inspired settings for disposable VM/Lab gaming tests. This profile removes security, servicing and compatibility features; no FPS, latency, RAM or CPU improvement is claimed or benchmark-validated.",
   "hivePrefixes": {
     "SYSTEM": "HKLM\\zSYSTEM",
     "SOFTWARE": "HKLM\\zSOFTWARE",
@@ -27,18 +27,18 @@
   },
   "groupDescriptions": {
     "atlas_power_scheme": "Custom AtlasOS-style power scheme, imported and activated at first boot.",
-    "disable_cpu_idle": "Force CPU to C-State 0 (no idle) to remove C-State wake latency.",
+    "disable_cpu_idle": "Request CPU C-State 0 and performance-favoring power-plan values. Raises idle power/temperature; hardware behavior varies and no performance gain is guaranteed.",
     "disable_security_mitigations": "Turn off VBS, HVCI, Credential Guard, System Guard and Spectre/Meltdown mitigations.",
     "remove_xbox_gaming_stack": "Remove Xbox Live / Gaming Services stack and Xbox AppX packages.",
     "strip_background_noise": "Disable Windows Search indexing, Bluetooth, Delivery Optimization, background apps, visual effects and scripted diagnostics, and turn off memory compression on machines with 16 GB or more.",
-    "instant_windows": "Remove window/menu/hover animations and shell delays, and shorten the app-close timeouts so windows open and close as fast as the hardware allows.",
+    "instant_windows": "Change selected window/menu/hover and application-shutdown settings. Slow applications may be terminated before saving; no responsiveness gain is guaranteed.",
     "disable_fast_startup": "Disable hibernation and Fast Startup (Hiberboot).",
-    "network_latency_tweaks": "Disable Nagle, QoS reserved bandwidth, Delivery Optimization P2P and WU auto-reboot.",
-    "disable_mpo": "Disable Multi-Plane Overlay to remove flicker / micro-stutter on some GPUs.",
-    "latency_input_tweaks": "Disable mouse acceleration, accessibility hotkeys, USB 3 link power management and other USB/GPU latency contributors.",
-    "interrupt_latency": "Per-device work that only exists on a live OS: MSI interrupts with high priority, NIC interrupt moderation off, RSS on, and USB/HID power management off.",
-    "disable_fso": "Force true fullscreen exclusive instead of Fullscreen Optimizations.",
-    "disable_game_mode": "Disable Windows Game Mode (AtlasOS default).",
+    "network_latency_tweaks": "Change selected TCP, QoS, Delivery Optimization and Windows Update restart settings; no latency or throughput improvement is guaranteed.",
+    "disable_mpo": "Request Multi-Plane Overlay off as a driver-specific troubleshooting experiment; it may help, do nothing, or regress display behavior.",
+    "latency_input_tweaks": "Change mouse, accessibility, USB and windowed-presentation settings. Effects and compatibility vary by hardware and application; no latency improvement is guaranteed.",
+    "interrupt_latency": "Apply per-device MSI/priority, NIC and USB/HID settings at first boot. Changes are hardware-specific, unbenchmarked and may cause driver or network regressions.",
+    "disable_fso": "Request Fullscreen Optimizations off; test game and display-driver compatibility.",
+    "disable_game_mode": "Disable Windows Game Mode. Scheduling and compatibility effects vary by game; no performance result is claimed.",
     "disable_printing": "Disable print spooler services and remove the printing optional features."
   },
   "registry": [
@@ -49,7 +49,7 @@
       "name": "AllowAutoGameMode",
       "type": "REG_DWORD",
       "value": "0",
-      "note": "AtlasOS ships Game Mode off - its useful work is already done by disabling WU/telemetry/background apps."
+      "note": "Disables the Windows Game Mode toggle when this group is enabled. The effect on any game or overlapping background setting is unverified."
     },
     {
       "group": "disable_game_mode",
@@ -82,7 +82,7 @@
       "name": "GameDVR_FSEBehavior",
       "type": "REG_DWORD",
       "value": "2",
-      "note": "2 = force fullscreen exclusive, bypassing Fullscreen Optimizations."
+      "note": "Requests the configured Fullscreen Optimizations behavior; support and presentation behavior vary by Windows build, game and driver."
     },
     {
       "group": "disable_fso",
@@ -123,7 +123,7 @@
       "name": "EnableVirtualizationBasedSecurity",
       "type": "REG_DWORD",
       "value": "0",
-      "note": "Largest remaining FPS lever on CPU-bound titles. Removes a kernel exploit mitigation."
+      "note": "Disables a Windows security mitigation when this group is enabled. Security risk is concrete; game-performance effects vary and are not benchmarked here."
     },
     {
       "group": "disable_security_mitigations",
@@ -230,7 +230,7 @@
       "name": "SystemResponsiveness",
       "type": "REG_DWORD",
       "value": "10",
-      "note": "AtlasOS value. Tiny11 Core ships 0; 10 leaves a small CPU reserve for the rest of the system."
+      "note": "Sets the configured MMCSS value. Its effect on a particular workload is not benchmarked."
     },
     {
       "group": "disable_fast_startup",
@@ -247,7 +247,7 @@
       "name": "OverlayTestMode",
       "type": "REG_DWORD",
       "value": "5",
-      "note": "Disables Multi-Plane Overlay. Fixes flicker / micro-stutter on some NVIDIA and AMD drivers."
+      "note": "Requests Multi-Plane Overlay off as a display-troubleshooting experiment; this may help, do nothing, or cause regressions on a given driver."
     },
     {
       "group": "latency_input_tweaks",
@@ -256,7 +256,7 @@
       "name": "MouseSpeed",
       "type": "REG_SZ",
       "value": "0",
-      "note": "Disable mouse acceleration - raw input for competitive shooters."
+      "note": "Changes the Windows pointer-acceleration setting. Games using raw input may handle mouse input separately; no input-latency result is claimed."
     },
     {
       "group": "latency_input_tweaks",
@@ -281,7 +281,7 @@
       "name": "Flags",
       "type": "REG_SZ",
       "value": "506",
-      "note": "Stop the Shift-key Sticky Keys prompt from interrupting a match."
+      "note": "Disables the Sticky Keys shortcut prompt."
     },
     {
       "group": "latency_input_tweaks",
@@ -289,7 +289,8 @@
       "path": "Control Panel\\Accessibility\\Keyboard Response",
       "name": "Flags",
       "type": "REG_SZ",
-      "value": "122"
+      "value": "122",
+      "note": "Disables the Sticky Keys shortcut prompt."
     },
     {
       "group": "latency_input_tweaks",
@@ -297,7 +298,8 @@
       "path": "Control Panel\\Accessibility\\ToggleKeys",
       "name": "Flags",
       "type": "REG_SZ",
-      "value": "58"
+      "value": "58",
+      "note": "Disables the Sticky Keys shortcut prompt."
     },
     {
       "group": "latency_input_tweaks",
@@ -306,7 +308,7 @@
       "name": "DirectXUserGlobalSettings",
       "type": "REG_SZ",
       "value": "SwapEffectUpgradeEnable=1;VRROptimizeEnable=1",
-      "note": "DXGI flip model / Optimizations for windowed games, with VRR optimisation ON. VRROptimizeEnable was 0 in an earlier revision, which told DWM not to align presentation to the display's refresh window - the opposite of what a VRR panel wants for frame pacing."
+      "note": "Requests DXGI flip-model and VRR-related windowed-presentation settings. Actual behavior depends on Windows, GPU, driver, display and application; no frame-pacing benefit is guaranteed."
     },
     {
       "group": "network_latency_tweaks",
@@ -349,7 +351,7 @@
       "name": "NonBestEffortLimit",
       "type": "REG_DWORD",
       "value": "0",
-      "note": "Free the ~20% of bandwidth the QoS packet scheduler reserves."
+      "note": "Sets the configured QoS policy value to zero. This is not a guaranteed bandwidth reservation or throughput increase."
     },
     {
       "group": "network_latency_tweaks",
@@ -358,7 +360,7 @@
       "name": "DODownloadMode",
       "type": "REG_DWORD",
       "value": "0",
-      "note": "Stop Delivery Optimization seeding updates to other PCs mid-game."
+      "note": "Changes the Delivery Optimization download mode; no game-latency benefit is claimed."
     },
     {
       "group": "network_latency_tweaks",
@@ -367,7 +369,7 @@
       "name": "NoAutoRebootWithLoggedOnUsers",
       "type": "REG_DWORD",
       "value": "1",
-      "note": "Never auto-reboot out from under a session."
+      "note": "Requests that Windows Update avoid automatically restarting while a user is logged on; behavior depends on Windows policy and update state."
     },
     {
       "group": "strip_background_noise",
@@ -393,7 +395,7 @@
       "name": "VisualFXSetting",
       "type": "REG_DWORD",
       "value": "2",
-      "note": "2 = best performance. AtlasOS default."
+      "note": "2 selects Windows' Adjust for best performance visual-effects preset; the label is a Windows setting, not a measured performance result."
     },
     {
       "group": "strip_background_noise",
@@ -402,7 +404,7 @@
       "name": "EnableDiagnostics",
       "type": "REG_DWORD",
       "value": "0",
-      "note": "AtlasOS disables troubleshooting so it cannot reset tweaks."
+      "note": "Changes the scripted-diagnostics policy. This can affect troubleshooting; no performance benefit is claimed."
     },
     {
       "group": "strip_background_noise",
@@ -419,7 +421,7 @@
       "name": "MinAnimate",
       "type": "REG_SZ",
       "value": "0",
-      "note": "The actual minimize/maximize animation toggle. VisualFXSetting alone does not reliably override this."
+      "note": "Sets a separate minimize/maximize animation value; no speed improvement is claimed."
     },
     {
       "group": "instant_windows",
@@ -428,7 +430,7 @@
       "name": "MenuShowDelay",
       "type": "REG_SZ",
       "value": "0",
-      "note": "Windows default is 400 ms before a menu appears. This is the most noticeable shell delay."
+      "note": "Changes the configured delay before menus appear; no performance result is claimed."
     },
     {
       "group": "instant_windows",
@@ -437,7 +439,7 @@
       "name": "AutoEndTasks",
       "type": "REG_SZ",
       "value": "1",
-      "note": "End hung tasks automatically instead of waiting for a prompt."
+      "note": "Requests automatic termination of tasks at shutdown; a slow or hung app may lose unsaved work."
     },
     {
       "group": "instant_windows",
@@ -455,7 +457,7 @@
       "name": "WaitToKillAppTimeout",
       "type": "REG_SZ",
       "value": "2000",
-      "note": "Default 20000 ms. This is the 'window closing' latency: how long a slow app may linger on exit."
+      "note": "Default 20000 ms; this shortens the wait for an application to exit. Combined with AutoEndTasks it may lose unsaved work in a slow or hung app."
     },
     {
       "group": "instant_windows",
@@ -544,7 +546,7 @@
       "name": "EnableTransparency",
       "type": "REG_DWORD",
       "value": "0",
-      "note": "Windows 11 acrylic/blur effects cost work on every window draw."
+      "note": "Disables the Windows transparency visual effect. Appearance changes; no rendering-performance result is claimed."
     },
     {
       "group": "instant_windows",
@@ -561,7 +563,7 @@
       "name": "WaitToKillServiceTimeout",
       "type": "REG_SZ",
       "value": "2000",
-      "note": "Default 5000 ms. Service equivalent of WaitToKillAppTimeout."
+      "note": "Default 5000 ms in this reference profile; this value changes a service-shutdown timeout and may affect shutdown behavior."
     }
   ],
   "services": [
@@ -966,7 +968,7 @@
         "name": "DirectXUserGlobalSettings",
         "type": "REG_SZ",
         "value": "SwapEffectUpgradeEnable=0;VRROptimizeEnable=1",
-        "note": "Leaves VRR optimisation on (it is the Windows default) and turns the windowed-games swap-chain upgrade back off."
+        "note": "Restores the configured DirectX user preference value; this does not establish that it is the Windows default or improve frame pacing."
       }
     ],
     "serviceRestore": [
@@ -1000,11 +1002,11 @@
       }
     ],
     "irreversible": [
-      "Windows Defender / Security - fully removed from the image by -RemoveDefender. Reinstall Windows or use the Standard variant to get it back.",
+      "Windows Defender / Security - fully removed from every Core-Gaming image. Reinstall Windows or use the Standard variant to restore it.",
       "Printing optional features - the printing payload is removed from the image. Re-adding requires servicing packages.",
       "Xbox AppX packages - reinstallable from the Microsoft Store, but the Store itself is also removed on Core.",
       "Boot configuration (bcdedit) - hypervisorlaunchtype and mitigation flags are applied at first boot and must be changed with bcdedit.",
-      "Device latency settings (interrupt_latency) - MSI mode, interrupt priority and NIC advanced properties are written per device on the live machine. They survive the revert script; use Device Manager / Set-NetAdapterAdvancedProperty to change them back. None of them can prevent boot: a device that rejects MSI simply keeps its line-based interrupt."
+      "Device latency settings (interrupt_latency) - MSI mode, interrupt priority and NIC advanced properties are written per device on the live machine and are not restored by the revert script. They may cause device-specific instability; the support registry key is not a guarantee. Review each setting and use Device Manager / Set-NetAdapterAdvancedProperty to restore vendor defaults."
     ]
   }
 }
