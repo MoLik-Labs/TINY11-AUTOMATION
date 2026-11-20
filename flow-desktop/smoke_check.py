@@ -18,6 +18,18 @@ with tempfile.TemporaryDirectory(prefix='flow-lab-smoke-') as tmp:
     from app import FlowWindow, Gtk
 
     window = FlowWindow()
+    # Inject deterministic metrics to check the real GTK widgets without
+    # claiming that the CI runner's metrics represent a user machine.
+    class FixtureSampler:
+        def sample(self):
+            return {'cpu_percent': 25.0, 'memory': (2 * 2**30, 8 * 2**30),
+                    'disk': (50 * 2**30, 100 * 2**30), 'uptime_seconds': 90000}
+    window.sampler = FixtureSampler()
+    window._refresh_stats()
+    assert window.stat_widgets['cpu'][0].get_text() == '25%'
+    assert window.stat_widgets['memory'][1].get_text() == '2.0 / 8.0 GiB · estimated used'
+    assert window.stat_widgets['disk'][0].get_text() == '50%'
+    assert window.stat_widgets['uptime'][0].get_text() == '1d 1h'
     window.show_all()
     while Gtk.events_pending():
         Gtk.main_iteration_do(False)
@@ -36,4 +48,4 @@ with tempfile.TemporaryDirectory(prefix='flow-lab-smoke-') as tmp:
             Gtk.main_iteration_do(False)
         time.sleep(0.05)
     assert marker.exists(), 'fixture launch was not executed'
-    print('GTK discovery, filtering, and benign launch: passed')
+    print('GTK metrics, discovery, filtering, and benign launch: passed')

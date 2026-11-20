@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 from flow_core import FlowError, inspect_host, launch_android, launch_windows
+from system_stats import StatsSampler
 
 try:
     import gi
@@ -19,7 +20,8 @@ except (ImportError, ValueError) as exc:
 class FlowWindow(Gtk.Window):
     def __init__(self):
         super().__init__(title='Flow Lab — Application launcher')
-        self.set_default_size(960, 680)
+        self.set_default_size(1080, 760)
+        self.set_size_request(560, 580)
         self.set_border_width(0)
         self.set_position(Gtk.WindowPosition.CENTER)
         self.connect('destroy', Gtk.main_quit)
@@ -31,18 +33,49 @@ class FlowWindow(Gtk.Window):
         header.set_show_close_button(True)
         self.set_titlebar(header)
 
-        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         content.set_border_width(24)
         outer.pack_start(content, True, True, 0)
-        title = Gtk.Label(label='Your apps, in one place')
+        title = Gtk.Label(label='Your space, at a glance')
         title.set_name('headline')
         title.set_xalign(0)
         content.pack_start(title, False, False, 0)
-        description = Gtk.Label(label='Launch installed Linux applications, or open an optional compatibility runtime.')
+        description = Gtk.Label(label='Live system overview and your installed applications, together.')
         description.set_xalign(0)
         description.set_line_wrap(True)
         content.pack_start(description, False, False, 0)
 
+        stats_title = Gtk.Label(label='SYSTEM OVERVIEW')
+        stats_title.set_xalign(0)
+        stats_title.get_style_context().add_class('section-label')
+        content.pack_start(stats_title, False, False, 0)
+        cards = Gtk.FlowBox()
+        cards.set_selection_mode(Gtk.SelectionMode.NONE)
+        cards.set_min_children_per_line(2)
+        cards.set_max_children_per_line(4)
+        cards.set_row_spacing(10)
+        cards.set_column_spacing(10)
+        cards.set_homogeneous(True)
+        self.stat_widgets = {}
+        for key, title, help_text in (
+            ('cpu', 'CPU', 'CPU activity over the last sampling interval; includes iowait as idle.'),
+            ('memory', 'MEMORY', 'Estimated used = MemTotal − MemAvailable; includes reclaimable memory as available.'),
+            ('disk', 'STORAGE', 'Used and total space for the filesystem containing your home directory.'),
+            ('uptime', 'UPTIME', 'Time since boot from /proc/uptime; suspend handling depends on the kernel.'),
+        ):
+            card, value, detail, bar = self._make_stat_card(title, help_text)
+            self.stat_widgets[key] = (value, detail, bar)
+            cards.add(card)
+        content.pack_start(cards, False, False, 0)
+        self.sampler = StatsSampler()
+        self._refresh_stats()
+        self._stats_timer = GLib.timeout_add_seconds(2, self._refresh_stats)
+        self.connect('destroy', self._stop_stats)
+
+        apps_title = Gtk.Label(label='APPLICATIONS')
+        apps_title.set_xalign(0)
+        apps_title.get_style_context().add_class('section-label')
+        content.pack_start(apps_title, False, False, 0)
         runtimes = Gtk.Box(spacing=10)
         content.pack_start(runtimes, False, False, 0)
         windows = Gtk.Button(label='Open Windows file…')
@@ -79,6 +112,68 @@ class FlowWindow(Gtk.Window):
         self.status.set_line_wrap(True)
         content.pack_start(self.status, False, False, 0)
         self._populate_apps()
+
+    @staticmethod
+    def _make_stat_card(title, help_text):
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
+        card.set_border_width(14)
+        card.set_size_request(180, -1)
+        card.get_style_context().add_class('stat-card')
+        card.set_tooltip_text(help_text)
+        heading = Gtk.Label(label=title)
+        heading.set_xalign(0)
+        heading.get_style_context().add_class('card-heading')
+        card.pack_start(heading, False, False, 0)
+        value = Gtk.Label(label='—')
+        value.set_xalign(0)
+        value.get_style_context().add_class('card-value')
+        card.pack_start(value, False, False, 0)
+        detail = Gtk.Label(label='Collecting…')
+        detail.set_xalign(0)
+        detail.set_ellipsize(Pango.EllipsizeMode.END)
+        detail.get_style_context().add_class('card-detail')
+        card.pack_start(detail, False, False, 0)
+        bar = Gtk.ProgressBar()
+        bar.get_style_context().add_class('stat-progress')
+        card.pack_start(bar, False, False, 0)
+        return card, value, detail, bar
+
+    def _set_stat(self, key, value, detail, fraction=0):
+        text, caption, bar = self.stat_widgets[key]
+        text.set_text(value)
+        caption.set_text(detail)
+        bar.set_fraction(max(0.0, min(1.0, fraction)))
+
+    def _refresh_stats(self):
+        data = self.sampler.sample()
+        cpu = data['cpu_percent']
+        if cpu is None:
+            self._set_stat('cpu', '—', 'Waiting for sample')
+        else:
+            self._set_stat('cpu', f'{cpu:.0f}%', 'Activity · last interval', cpu / 100)
+        for key in ('memory', 'disk'):
+            value = data[key]
+            if value is None:
+                self._set_stat(key, '—', 'Not available')
+                continue
+            used, total = value
+            self._set_stat(key, f'{100 * used / total:.0f}%',
+                           f'{used / 2**30:.1f} / {total / 2**30:.1f} GiB · ' + ('estimated used' if key == 'memory' else 'home filesystem'),
+                           used / total)
+        uptime = data['uptime_seconds']
+        if uptime is None:
+            self._set_stat('uptime', '—', 'Not available')
+        else:
+            days, hours = divmod(uptime // 3600, 24)
+            minutes = (uptime % 3600) // 60
+            label = f'{days}d {hours}h' if days else f'{hours}h {minutes}m'
+            self._set_stat('uptime', label, 'Since last boot')
+        return True
+
+    def _stop_stats(self, _window):
+        if self._stats_timer:
+            GLib.source_remove(self._stats_timer)
+            self._stats_timer = None
 
     def _install_css(self):
         css = Gtk.CssProvider()

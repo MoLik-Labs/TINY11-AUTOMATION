@@ -33,11 +33,20 @@ may be needed because virtual environments do not necessarily contain the
 distribution's PyGObject bindings. The application does not install itself,
 change the login session, install packages, access the network, modify boot
 configuration, or partition a disk. Software that you choose to launch may do
-any of those things independently. On-screen translucency is styling inside a
-normal window, not a system-wide compositor or an exact Liquid Glass clone.
+any of those things independently. The Catppuccin Mocha styling is applied inside a normal window, not a system-wide
+compositor or an exact Liquid Glass clone.
 
 ### What works today
 
+- A Catppuccin Mocha overview showing local CPU activity, estimated memory use,
+  home-filesystem space and uptime, refreshed about every two seconds. CPU is
+  measured between two `/proc/stat` samples (iowait counted as idle); memory is
+  `MemTotal − MemAvailable` from `/proc/meminfo`; disk uses filesystem blocks
+  including space reserved for the system; uptime comes from `/proc/uptime`.
+  Unavailable metrics display `—`, not zero. Initial CPU needs two samples.
+  In containers, proc/filesystem views may not represent cgroup limits or the
+  physical machine. These are live observations, not performance benchmarks.
+  No metrics are uploaded. The browser preview displays placeholders, not data.
 - List desktop applications visible to the current user via GIO; search by name
   or description and launch a selected app through its installed desktop entry.
 - Show whether `wine` and `waydroid` are found on PATH. This is presence only,
@@ -85,7 +94,7 @@ benchmarks are needed before making any RAM, CPU or responsiveness claim.
 
 The Python tests mock the runtime launch commands and verify that file names are
 passed as single arguments without invoking a shell. Repository CI also runs a
-GTK smoke test under Xvfb that discovers and launches a harmless fixture. This
+GTK smoke test under Xvfb that checks sample metric display, discovers and launches a harmless fixture. This
 is not a physical-hardware test, Wayland test, Wine test, Waydroid test, or proof
 of a working bootable image. The PICO experiment remains separately documented in
 [PICO.md](PICO.md).
