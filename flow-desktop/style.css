@@ -1,0 +1,31 @@
+/* Catppuccin Mocha: https://github.com/catppuccin/catppuccin */
+@define-color base #1e1e2e;
+@define-color mantle #181825;
+@define-color surface0 #313244;
+@define-color surface1 #45475a;
+@define-color text #cdd6f4;
+@define-color subtext #a6adc8;
+@define-color mauve #cba6f7;
+@define-color lavender #b4befe;
+@define-color teal #94e2d5;
+
+#flow-window { background-color: @base; color: @text; }
+#headline { color: @text; font-size: 29px; font-weight: 700; letter-spacing: -0.7px; }
+headerbar { background: @mantle; color: @text; border-bottom: 1px solid @surface0; box-shadow: none; }
+headerbar subtitle { color: @subtext; }
+label { color: @text; }
+.section-label { color: @subtext; font-size: 10px; font-weight: 700; letter-spacing: 1.4px; margin-top: 5px; }
+flowbox, flowboxchild { background: transparent; padding: 0; }
+.stat-card { background: @surface0; border: 1px solid @surface1; border-radius: 14px; }
+.card-heading { color: @subtext; font-size: 10px; font-weight: 700; letter-spacing: 1px; }
+.card-value { color: @text; font-size: 26px; font-weight: 700; }
+.card-detail { color: @subtext; font-size: 11px; }
+.stat-progress trough { background: @surface1; border: 0; border-radius: 8px; min-height: 4px; }
+.stat-progress progress { background: @mauve; border: 0; border-radius: 8px; min-height: 4px; }
+list { background: @mantle; border: 1px solid @surface0; border-radius: 12px; color: @text; }
+row { background: transparent; border-bottom: 1px solid @surface0; color: @text; }
+row:hover, row:selected { background: @surface0; }
+button { color: @text; background: @surface0; border: 1px solid @surface1; border-radius: 9px; box-shadow: none; padding: 8px 12px; }
+button:hover { background: @surface1; }
+button:focus, entry:focus { border-color: @lavender; }
+entry { color: @text; background: @mantle; border: 1px solid @surface1; border-radius: 10px; padding: 8px; }

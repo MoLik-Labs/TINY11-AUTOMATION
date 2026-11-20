@@ -131,5 +131,6 @@ Please include the profile affected, a reproducible source ISO/build and image i
 - [Pico-style VM/Lab experiment](PICO.md) integrates NTDEV's official CD700
   recipe through a SHA-256-verified upstream builder download. Extreme removals;
   no promised ISO size or successful boot.
-- [Flow-inspired desktop concept](FLOW.md) is a browser-only visual prototype,
-  not an operating system and not an app compatibility layer.
+- [Flow Lab](FLOW.md) is an experimental Linux GTK application launcher with
+  optional Wine/Waydroid entry points; it is not an operating system or an ISO.
+  The separate `flow-preview/` remains a browser-only visual prototype.
